@@ -25,11 +25,13 @@ from .models import (
     to_datetime,
 )
 from .projects import ProjectService
+from .spaces import CURRENT, Scope
 from .statuses import StatusService
 
 BASE_SELECT = """
 SELECT t.*, p.name AS project_name, p.color AS project_color,
-       s.label AS status_label, s.kind AS status_kind, s.color AS status_color
+       s.label AS status_label, s.kind AS status_kind, s.color AS status_color,
+       (SELECT COUNT(*) FROM attachments a WHERE a.task_id = t.id) AS n_attach
 FROM tasks t
 LEFT JOIN projects p ON p.id = t.project_id
 JOIN statuses s ON s.id = t.status_id
@@ -98,6 +100,8 @@ class TaskFilter:
     involving: Optional[tuple[date, date]] = None  # deadline OU début dans l'intervalle
     sort: str = "deadline"
     descending: bool = False
+    space_id: object = CURRENT  # None = tous les espaces
+    include_archived: bool = False  # tâches des projets archivés : masquées par défaut
 
     def is_empty(self) -> bool:
         return self == TaskFilter()
@@ -110,7 +114,9 @@ class TaskService:
         projects: ProjectService,
         statuses: StatusService,
         clock: Callable[[], datetime] = datetime.now,
+        scope: Optional[Scope] = None,
     ):
+        self.scope = scope or projects.scope
         self.db = db
         self.projects = projects
         self.statuses = statuses
@@ -138,18 +144,34 @@ class TaskService:
             raise ValidationError("Tâche introuvable.")
         return Task.from_row(r)
 
-    def all(self, include_deleted: bool = False) -> list[Task]:
-        sql = BASE_SELECT + ("" if include_deleted else " WHERE t.deleted_at IS NULL")
-        return [Task.from_row(r) for r in self.db.conn.execute(sql)]
+    def _scope_sql(self, space_id, include_archived: bool, include_deleted: bool = False) -> tuple[list[str], list]:
+        where, params = [], []
+        if not include_deleted:
+            where.append("t.deleted_at IS NULL")
+        sp = self.scope.resolve(space_id)
+        if sp is not None:
+            where.append("t.space_id=?")
+            params.append(sp)
+        if not include_archived:  # projet archivé => tâches invisibles partout
+            where.append("(p.archived IS NULL OR p.archived=0)")
+        return where, params
 
-    def deleted(self) -> list[Task]:
-        sql = BASE_SELECT + " WHERE t.deleted_at IS NOT NULL ORDER BY t.deleted_at DESC"
-        return [Task.from_row(r) for r in self.db.conn.execute(sql)]
+    def all(self, include_deleted: bool = False, include_archived: bool = False, space_id=CURRENT) -> list[Task]:
+        where, params = self._scope_sql(space_id, include_archived, include_deleted)
+        sql = BASE_SELECT + (" WHERE " + " AND ".join(where) if where else "")
+        return [Task.from_row(r) for r in self.db.conn.execute(sql, params)]
 
-    def assignees(self) -> list[str]:
+    def deleted(self, space_id=CURRENT) -> list[Task]:
+        where, params = self._scope_sql(space_id, False, True)
+        where.append("t.deleted_at IS NOT NULL")
+        sql = BASE_SELECT + " WHERE " + " AND ".join(where) + " ORDER BY t.deleted_at DESC"
+        return [Task.from_row(r) for r in self.db.conn.execute(sql, params)]
+
+    def assignees(self, space_id=CURRENT) -> list[str]:
+        where, params = self._scope_sql(space_id, False)
         rows = self.db.conn.execute(
-            "SELECT DISTINCT assignee FROM tasks WHERE assignee<>'' AND deleted_at IS NULL ORDER BY assignee COLLATE NOCASE"
-        )
+            "SELECT DISTINCT t.assignee FROM tasks t LEFT JOIN projects p ON p.id=t.project_id "
+            "WHERE t.assignee<>'' AND " + " AND ".join(where) + " ORDER BY t.assignee COLLATE NOCASE", params)
         return [r[0] for r in rows]
 
     def count(self, flt: Optional[TaskFilter] = None, today: Optional[date] = None) -> int:
@@ -158,7 +180,7 @@ class TaskService:
     def list(self, flt: Optional[TaskFilter] = None, today: Optional[date] = None) -> list[Task]:
         flt = flt or TaskFilter()
         today = today or self.clock().date()
-        where, params = ["t.deleted_at IS NULL"], []
+        where, params = self._scope_sql(flt.space_id, flt.include_archived)
         closed = ",".join(f"'{k}'" for k in CLOSED_KINDS)
         active = f"s.kind NOT IN ({closed})"
 
@@ -270,7 +292,8 @@ class TaskService:
     def create(self, data: TaskInput, history: bool = True, strict: bool = True, completed_default_now: bool = True) -> Task:
         self.validate(data, strict)
         now = self.clock()
-        project = self.projects.get_or_create(data.project_name)
+        space_id = data.space_id or self.scope.space_id or 1
+        project = self._project_for(data.project_name, space_id)
         status_id = data.status_id or self.statuses.first_of_kind(KIND_TODO).id
         status = self.statuses.get(status_id)
         completed = data.completed_at
@@ -283,13 +306,13 @@ class TaskService:
             cur = c.execute(
                 """INSERT INTO tasks(title,project_id,description,assignee,created_at,start_date,deadline,status_id,
                    priority,completed_at,start_time,end_time,est_minutes,actual_minutes,extra_date,source,
-                   updated_at,status_changed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   updated_at,status_changed_at,space_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     data.title.strip(), project.id if project else None, (data.description or "").strip(),
                     (data.assignee or "").strip(), iso_datetime(created), iso_date(data.start_date),
                     iso_date(data.deadline), status_id, data.priority, iso_datetime(completed),
                     iso_time(data.start_time), iso_time(data.end_time), data.est_minutes, data.actual_minutes,
-                    iso_date(data.extra_date), data.source, iso_datetime(now), iso_datetime(now),
+                    iso_date(data.extra_date), data.source, iso_datetime(now), iso_datetime(now), space_id,
                 ),
             )
             task_id = cur.lastrowid
@@ -301,6 +324,27 @@ class TaskService:
                         "INSERT INTO comments(task_id,body,created_at) VALUES (?,?,?)",
                         (task_id, body.strip(), iso_datetime(created)),
                     )
+        self._notify()
+        return self.get(task_id)
+
+    def _project_for(self, name: str, space_id: int):
+        project = self.projects.get_or_create(name, space_id)
+        if project and project.archived:
+            raise ValidationError(f"Le projet « {project.name} » est archivé : désarchivez-le ou choisissez un autre projet.")
+        return project
+
+    def move_to_space(self, task_id: int, space_id: int) -> Task:
+        """Déplace une tâche vers un autre espace (le projet est recréé/retrouvé par son nom dans l'espace cible)."""
+        t = self.get(task_id)
+        if t.space_id == space_id:
+            return t
+        project = self.projects.get_or_create(t.project_name, space_id)
+        now = self.clock()
+        with self.db.transaction() as c:
+            c.execute("UPDATE tasks SET space_id=?, project_id=?, updated_at=? WHERE id=?",
+                      (space_id, project.id if project else None, iso_datetime(now), task_id))
+            c.execute("UPDATE alerts SET resolved_at=? WHERE task_id=? AND resolved_at IS NULL", (iso_datetime(now), task_id))
+            self._history(c, task_id, t.title, "updated", "Espace", str(t.space_id), str(space_id), now)
         self._notify()
         return self.get(task_id)
 
@@ -329,7 +373,9 @@ class TaskService:
         self.validate(data, strict)
         old = self.get(task_id)
         now = self.clock()
-        project = self.projects.get_or_create(data.project_name)
+        project = (self._project_for(data.project_name, old.space_id)
+                   if (data.project_name or "").strip() != old.project_name else
+                   (self.projects.get(old.project_id) if old.project_id else None))
         new_status = self.statuses.get(data.status_id or old.status_id)
         status_changed = new_status.id != old.status_id
         completed = old.completed_at
@@ -457,8 +503,13 @@ class TaskService:
         rows = self.db.conn.execute("SELECT * FROM comments WHERE task_id=? ORDER BY created_at DESC, id DESC", (task_id,))
         return [Comment(r["id"], r["task_id"], r["body"], to_datetime(r["created_at"])) for r in rows]
 
-    def history(self, task_id: Optional[int] = None, limit: int = 500, event: str = "", text: str = "") -> list[HistoryEvent]:
+    def history(self, task_id: Optional[int] = None, limit: int = 500, event: str = "", text: str = "",
+                space_id=None) -> list[HistoryEvent]:
         where, params = [], []
+        sp = self.scope.resolve(space_id)
+        if sp is not None:
+            where.append("task_id IN (SELECT id FROM tasks WHERE space_id=?)")
+            params.append(sp)
         if task_id is not None:
             where.append("task_id=?")
             params.append(task_id)

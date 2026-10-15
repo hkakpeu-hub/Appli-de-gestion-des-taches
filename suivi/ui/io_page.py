@@ -9,11 +9,12 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .. import paths
+from ..core.spaces import CURRENT
 from ..core.tasks import TaskFilter
 from ..excel.exporter import export_tasks
 from ..excel.importer import ImportFailed, ImportPreview
@@ -36,14 +37,16 @@ class ImportDialog(QDialog):
         root = QVBoxLayout(self)
 
         root.addWidget(QLabel("<b>1. Feuilles à importer</b> (les feuilles sans colonnes « Action » et suivi sont ignorées) :"))
-        self.sheets = QTableWidget(len(self.preview.sheets), 4)
-        self.sheets.setHorizontalHeaderLabels(["Importer", "Feuille", "Lignes", "Projet par défaut (si pas de colonne Projet)"])
+        self.sheets = QTableWidget(len(self.preview.sheets), 5)
+        self.sheets.setHorizontalHeaderLabels(["Importer", "Feuille", "Lignes", "Espace de destination", "Projet par défaut (si pas de colonne Projet)"])
         self.sheets.verticalHeader().setVisible(False)
         self.sheets.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.sheets.horizontalHeader().setStretchLastSection(True)
         self.sheets.setMaximumHeight(34 + 30 * min(6, len(self.preview.sheets)) + 8)
         self._checks: list[QCheckBox] = []
         self._edits: list[QLineEdit] = []
+        self._spaces: list[QComboBox] = []
+        space_list = ctx.spaces.list(enabled_only=True)
         for r, s in enumerate(self.preview.sheets):
             ok = s.header_row is not None
             chk = QCheckBox(); chk.setChecked(s.selected); chk.setEnabled(ok)
@@ -58,7 +61,15 @@ class ImportDialog(QDialog):
             ed.setPlaceholderText("Projet de la feuille" if ok and "project" not in s.columns else "(colonne Projet du fichier)")
             ed.editingFinished.connect(self._reparse)
             self._edits.append(ed)
-            self.sheets.setCellWidget(r, 3, ed)
+            self.sheets.setCellWidget(r, 4, ed)
+            cb = QComboBox()
+            for sp in space_list:
+                cb.addItem(f"{sp.icon} {sp.name}", sp.id)
+            cb.setCurrentIndex(max(0, cb.findData(s.space_id)))
+            cb.setEnabled(ok)
+            cb.currentIndexChanged.connect(self._reparse)
+            self._spaces.append(cb)
+            self.sheets.setCellWidget(r, 3, cb)
         root.addWidget(self.sheets)
 
         self.update_opt = QCheckBox("Mettre à jour les tâches déjà présentes (statut, deadline, description, responsable, commentaires). "
@@ -84,8 +95,9 @@ class ImportDialog(QDialog):
         self._fill()
 
     def _reparse(self, *_) -> None:
-        for s, chk, ed in zip(self.preview.sheets, self._checks, self._edits):
+        for s, chk, ed, cb in zip(self.preview.sheets, self._checks, self._edits, self._spaces):
             s.selected = chk.isChecked() and s.header_row is not None
+            s.space_id = cb.currentData() or s.space_id
             if ed.isEnabled():
                 s.default_project = ed.text().strip()
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -162,6 +174,8 @@ class IOPage(Page):
         exp.lay.addLayout(row)
         self.include_trash = QCheckBox("Inclure les tâches de la corbeille")
         exp.lay.addWidget(self.include_trash)
+        self.all_spaces = QCheckBox("Inclure tous les espaces (sinon : l'espace affiché)")
+        exp.lay.addWidget(self.all_spaces)
         top.addWidget(exp, 1)
         root.addLayout(top)
 
@@ -212,7 +226,8 @@ class IOPage(Page):
         if filtered:
             tasks = self.ctx.tasks.list(self.get_view_filter(), self.ctx.clock().date())
         else:
-            tasks = self.ctx.tasks.all(include_deleted=self.include_trash.isChecked())
+            tasks = self.ctx.tasks.all(include_deleted=self.include_trash.isChecked(),
+                                       space_id=None if self.all_spaces.isChecked() else CURRENT)
         if not tasks:
             return QMessageBox.information(self, "Export", "Aucune tâche à exporter.")
         stamp = self.ctx.clock().strftime("%Y%m%d_%H%M")

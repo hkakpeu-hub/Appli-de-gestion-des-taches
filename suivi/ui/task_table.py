@@ -61,7 +61,7 @@ class TaskModel(QAbstractTableModel):
             return t
         if role == Qt.DisplayRole:
             return [
-                t.priority_label, t.title, t.project_name, t.status_label, t.assignee,
+                t.priority_label, ("📎 " if t.n_attach else "") + t.title, t.project_name, t.status_label, t.assignee,
                 fmt_date(t.start_date), fmt_date(t.deadline), due_text(t, today), t.updated_at.strftime("%d/%m/%Y"),
             ][c]
         if role == Qt.ToolTipRole and c == 1:
@@ -210,6 +210,12 @@ class TaskTable(QTableView):
             a = pr_menu.addAction(PRIORITY_LABELS[p])
             a.triggered.connect(lambda _=False, pr=p: self._run(
                 lambda t: svc.update(t.id, svc.to_input(t, priority=pr)), sel))
+        spaces = [s for s in self.ctx.spaces.list(enabled_only=True) if s.id != one.space_id]
+        if spaces:
+            mv = menu.addMenu("Déplacer vers l'espace")
+            for s in spaces:
+                a = mv.addAction(f"{s.icon}  {s.name}")
+                a.triggered.connect(lambda _=False, sid=s.id: self._run(lambda t: svc.move_to_space(t.id, sid), sel))
         menu.addSeparator()
         dele = menu.addAction("Supprimer (corbeille)…")
         dele.triggered.connect(lambda: self.delete_selected())

@@ -15,12 +15,14 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, __version__
 from ..core.alerts import LEVELS
 from ..core.quickadd import parse_quick
+from ..core.spaces import CURRENT
 from . import theme
 from .ai_page import AIPage
 from .alerts_page import AlertsPage
 from .common import show_error
 from .dashboard_page import DashboardPage
 from .history_page import HistoryPage
+from .home_page import HomePage
 from .io_page import IOPage
 from .planning_page import PlanningPage
 from .projects_page import ProjectsPage
@@ -69,15 +71,21 @@ class MainWindow(QMainWindow):
         self.resize(1360, 860)
         self.setMinimumSize(1000, 640)
 
-        central = QWidget(); self.setCentralWidget(central)
+        self.root_stack = QStackedWidget(); self.setCentralWidget(self.root_stack)
+        self.home = HomePage(ctx)
+        central = QWidget()  # espace de travail (barre latérale + pages)
+        self.root_stack.addWidget(self.home); self.root_stack.addWidget(central)
         root = QHBoxLayout(central); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
 
         # --- barre latérale
         side = QFrame(); side.setObjectName("sidebar"); side.setFixedWidth(232)
         sl = QVBoxLayout(side); sl.setContentsMargins(0, 0, 0, 10); sl.setSpacing(0)
-        brand = QLabel(f"✔ {APP_NAME}"); brand.setObjectName("brand")
-        sub = QLabel("Tâches · projets · échéances"); sub.setObjectName("brandSub")
-        sl.addWidget(brand); sl.addWidget(sub)
+        home_btn = QPushButton("‹  Accueil"); home_btn.setObjectName("nav"); home_btn.setCursor(Qt.PointingHandCursor)
+        home_btn.clicked.connect(self.go_home)
+        sl.addSpacing(8); sl.addWidget(home_btn)
+        self.brand = QLabel(APP_NAME); self.brand.setObjectName("brand")
+        self.brand_sub = QLabel("Tâches · projets · échéances"); self.brand_sub.setObjectName("brandSub")
+        sl.addWidget(self.brand); sl.addWidget(self.brand_sub)
         self.nav_group = QButtonGroup(self); self.nav_group.setExclusive(True)
         self.nav_buttons: dict[str, QPushButton] = {}
         for i, (key, label) in enumerate(NAV):
@@ -117,6 +125,12 @@ class MainWindow(QMainWindow):
         self.pages["dashboard"].navigate.connect(self.open_view)
         self.pages["projects"].open_project.connect(lambda pid: self.open_view("all", pid))
         self.pages["settings"].settings_saved.connect(self._settings_changed)
+        self.home.open_space.connect(self.enter_space)
+        self.home.open_settings.connect(lambda: self._enter_for_settings())
+        self.home.open_alerts.connect(self.open_alerts_center)
+        self.home.open_module.connect(self.open_module)
+        ctx.spaces.subscribe(self._data_changed)
+        ctx.scope.subscribe(self._space_changed)
 
         # --- données -> interface
         ctx.tasks.subscribe(self._data_changed)
@@ -130,13 +144,13 @@ class MainWindow(QMainWindow):
         self.tray.setToolTip(APP_NAME)
         menu = QMenu()
         menu.addAction("Ouvrir").triggered.connect(self.show_window)
-        menu.addAction("Alertes").triggered.connect(lambda: (self.show_window(), self.go("alerts")))
-        menu.addAction("Nouvelle tâche").triggered.connect(lambda: (self.show_window(), self.new_task()))
+        menu.addAction("Alertes").triggered.connect(self.open_alerts_center)
+        menu.addAction("Accueil").triggered.connect(lambda: (self.show_window(), self.go_home()))
         menu.addSeparator()
         menu.addAction("Quitter").triggered.connect(self.quit_app)
         self.tray.setContextMenu(menu); self._tray_menu = menu
         self.tray.activated.connect(lambda r: self.show_window() if r in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
-        self.tray.messageClicked.connect(lambda: (self.show_window(), self.go("alerts")))
+        self.tray.messageClicked.connect(self.open_alerts_center)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray.show()
 
@@ -151,7 +165,8 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self); self.timer.timeout.connect(self.tick)
         self.timer.start(int(ctx.settings.get("check_interval_seconds")) * 1000)
 
-        self.go("dashboard")
+        self._space_changed()
+        self.go_home()
         QTimer.singleShot(400, self.tick)
 
     # ------------------------------------------------------------------ navigation
@@ -159,6 +174,51 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.pages[key])
         self.nav_buttons[key].setChecked(True)
         self.pages[key].request_refresh()
+
+    def go_home(self) -> None:
+        self.root_stack.setCurrentWidget(self.home)
+        self.home.request_refresh()
+        self._update_badge()
+
+    def enter_space(self, space_id: int) -> None:
+        """Ouvre l'espace de travail (Travail, Personnel, Kingdom…) sur son tableau de bord."""
+        if self.ctx.scope.space_id != space_id:
+            self.ctx.scope.set(space_id)
+        self.root_stack.setCurrentIndex(1)
+        self.go("dashboard")
+        self._update_badge()
+
+    def _enter_for_settings(self) -> None:
+        if self.ctx.scope.space_id is None:
+            first = self.ctx.spaces.list(enabled_only=True)
+            self.ctx.scope.set(first[0].id if first else 1)
+        self.root_stack.setCurrentIndex(1)
+        self.go("settings")
+
+    def open_alerts_center(self) -> None:
+        self.show_window()
+        unread = self.ctx.alerts.visible(include_read=False)
+        target = unread[0].space_id if unread else (self.ctx.scope.space_id or 1)
+        if self.ctx.scope.space_id != target:
+            self.ctx.scope.set(target)
+        self.root_stack.setCurrentIndex(1)
+        self.go("alerts")
+
+    def open_module(self, key: str) -> None:
+        QMessageBox.information(self, "Module", "Ce module n'est pas encore disponible.")
+
+    def _space_changed(self) -> None:
+        sid = self.ctx.scope.space_id
+        try:
+            sp = self.ctx.spaces.get(sid) if sid else None
+        except Exception:
+            sp = None
+        self.brand.setText(f"{sp.icon} {sp.name}" if sp else APP_NAME)
+        self.brand_sub.setText("Tâches · projets · échéances")
+        self.quick.setPlaceholderText(
+            f"＋  Ajout rapide dans « {sp.name if sp else '…'} » :  Relancer Donald  #Projet  !demain  @Responsable   (Entrée)")
+        for key in ("tasks", "today"):
+            self.pages[key].reset_filters()
 
     def open_view(self, view: str, project_id: Optional[int] = None) -> None:
         page = self.pages["today"] if view == "today" else self.pages["tasks"]
@@ -176,6 +236,8 @@ class MainWindow(QMainWindow):
             self.pages["tasks"].search.setFocus()
 
     def new_task(self) -> None:
+        if self.root_stack.currentWidget() is self.home:
+            return
         TaskDialog(self.ctx, None, None, self).exec()
 
     def quick_add(self) -> None:
@@ -198,7 +260,7 @@ class MainWindow(QMainWindow):
         if self._closed:
             return
         self.run_alerts(notify=True)
-        for page in self.pages.values():
+        for page in (*self.pages.values(), self.home):
             page.request_refresh()
         self._update_badge()
 
@@ -208,14 +270,15 @@ class MainWindow(QMainWindow):
 
     def refresh_all(self) -> None:
         self.run_alerts(notify=False)
-        for page in self.pages.values():
+        for page in (*self.pages.values(), self.home):
             page.request_refresh()
 
     def _update_badge(self) -> None:
-        n = self.ctx.alerts.unread_count()
-        self.nav_buttons["alerts"].setText(f"🔔  Alertes" + (f"   ({n})" if n else ""))
-        self.setWindowTitle(f"{'(%d) ' % n if n else ''}{APP_NAME} {__version__}")
-        self.tray.setToolTip(f"{APP_NAME} — {n} alerte(s) non lue(s)" if n else APP_NAME)
+        total = self.ctx.alerts.unread_count()  # tous les espaces
+        n = self.ctx.alerts.unread_count(space_id=CURRENT) if self.ctx.scope.space_id else total
+        self.nav_buttons["alerts"].setText("🔔  Alertes" + (f"   ({n})" if n else ""))
+        self.setWindowTitle(f"{'(%d) ' % total if total else ''}{APP_NAME} {__version__}")
+        self.tray.setToolTip(f"{APP_NAME} — {total} alerte(s) non lue(s)" if total else APP_NAME)
 
     def _settings_changed(self) -> None:
         self.timer.start(int(self.ctx.settings.get("check_interval_seconds")) * 1000)
@@ -241,7 +304,7 @@ class MainWindow(QMainWindow):
             else:
                 for a in fresh:
                     icon = QSystemTrayIcon.Critical if a.level == "critical" else QSystemTrayIcon.Warning
-                    self.tray.showMessage(f"{LEVELS[a.level]} · {a.task_title[:70]}", a.message, icon, 12000)
+                    self.tray.showMessage(f"{a.space_name} · {LEVELS[a.level]} · {a.task_title[:60]}", a.message, icon, 12000)
         self.ctx.alerts.mark_notified([a.id for a in fresh])  # jamais renotifiées, même après redémarrage
 
     def tick(self) -> None:

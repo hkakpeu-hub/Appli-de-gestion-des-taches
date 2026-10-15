@@ -163,7 +163,8 @@ class DashboardPage(Page):
         settings = self.ctx.settings.all()
         tasks = self.ctx.tasks.all()
         d = metrics.compute_dashboard(tasks, now, settings)
-        self.sub.setText(f"Situation au {now:%d/%m/%Y à %H:%M} · mise à jour automatique")
+        sp = self.ctx.spaces.get(self.ctx.scope.space_id) if self.ctx.scope.space_id else None
+        self.sub.setText(f"{sp.icon + ' ' + sp.name + ' · ' if sp else ''}Situation au {now:%d/%m/%Y à %H:%M} · mise à jour automatique")
         for key in self.kpis:
             self.kpis[key].set_value(getattr(d, key))
         self.bar.setValue(int(d.progress * 100))

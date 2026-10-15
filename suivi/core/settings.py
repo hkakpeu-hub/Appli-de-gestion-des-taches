@@ -36,6 +36,10 @@ DEFAULTS: dict[str, Any] = {
     # interface
     "minimize_to_tray": True,
     "assignee_default": "",
+    # pièces jointes (dossier vide = dossier par défaut dans les données de l'application)
+    "attachments_dir": "",
+    # modules facultatifs de l'accueil (budget : à venir)
+    "modules": {"budget": False},
     # IA (la clé est dans le coffre Windows, pas ici)
     "ai_enabled": False,
     "ai_model": "claude-sonnet-5-5",

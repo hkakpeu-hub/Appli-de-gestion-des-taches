@@ -64,6 +64,7 @@ PRIORITY_SYNONYMS = {
     "urgent": "critical", "urgente": "critical",
 }
 DEFAULT_PROJECT_BY_SHEET = {"actions personnelles": "Personnel"}
+DEFAULT_SPACE_BY_SHEET = {"actions personnelles": "Personnel"}  # feuille -> nom d'espace
 DATE_PATTERNS = ["%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y", "%Y/%m/%d"]
 
 
@@ -146,6 +147,7 @@ class SheetInfo:
     selected: bool = False
     default_project: str = ""
     skip_reason: str = ""
+    space_id: int = 1  # espace de destination des lignes de la feuille
 
 
 @dataclass
@@ -272,6 +274,7 @@ class ExcelImporter:
     def detect_sheet(self, sh: RawSheet) -> SheetInfo:
         info = SheetInfo(sh.name, sh.hidden, None, {})
         info.default_project = DEFAULT_PROJECT_BY_SHEET.get(fold(sh.name), "")
+        info.space_id = self._default_space(sh.name)
         for i, row in enumerate(sh.rows[:20]):
             cols: dict[str, int] = {}
             for j, cell in enumerate(row):
@@ -300,6 +303,18 @@ class ExcelImporter:
         if "project" not in info.columns and not info.default_project:
             info.default_project = sh.name
         return info
+
+    def _spaces(self):
+        from ..core.spaces import SpaceService
+        return SpaceService(self.tasks.db)
+
+    def _default_space(self, sheet_name: str) -> int:
+        wanted = DEFAULT_SPACE_BY_SHEET.get(fold(sheet_name))
+        if wanted:
+            sp = self._spaces().by_name(wanted)
+            if sp:
+                return sp.id
+        return self.tasks.scope.space_id or 1
 
     @staticmethod
     def _cell(row, idx):
@@ -347,8 +362,8 @@ class ExcelImporter:
 
     def _existing_index(self) -> dict[str, tuple]:
         index = {}
-        for t in self.tasks.all(include_deleted=True):
-            index.setdefault(dup_key(t.title, t.start_date, t.project_name), t)
+        for t in self.tasks.all(include_deleted=True, include_archived=True, space_id=None):
+            index.setdefault(f"{t.space_id}|" + dup_key(t.title, t.start_date, t.project_name), t)
         return index
 
     def _parse_row(self, info: SheetInfo, row: list, row_no: int) -> ParsedRow:
@@ -359,7 +374,7 @@ class ExcelImporter:
         if title is None:
             return ParsedRow(info.name, row_no, None, "invalid", ["intitulé manquant"])
         title = " ".join(str(title).split())
-        data = TaskInput(title=title, source=f"Excel:{info.name}")
+        data = TaskInput(title=title, source=f"Excel:{info.name}", space_id=info.space_id)
 
         data.start_date, w = parse_date(g("start_date")); w and msgs.append(f"début : {w}")
         data.deadline, w = parse_date(g("deadline")); w and msgs.append(f"deadline : {w}")
@@ -412,8 +427,16 @@ class ExcelImporter:
         w and msgs.append(w)
         if data.completed_at is not None and self.tasks.statuses.get(data.status_id).kind != KIND_DONE:
             data.completed_at = None
+        # une ligne dont le projet porte le nom d'un autre espace (ex. « Personnel ») rejoint cet espace
+        target = next((s for s in self._spaces().list() if fold(s.name) == fold(data.project_name)), None)
+        if target and target.id != data.space_id:
+            data.space_id = target.id
+            msgs.append(f"projet « {data.project_name} » : tâche rangée dans l'espace {target.name}")
+        project = self.tasks.projects.by_name(data.project_name, data.space_id) if data.project_name else None
+        if project and project.archived:
+            msgs.append(f"le projet « {project.name} » est archivé : la tâche sera importée mais masquée")
         return ParsedRow(info.name, row_no, data, "new", msgs, comment=str(g("comment") or ""),
-                         key=dup_key(title, data.start_date, data.project_name))
+                         key=f"{data.space_id}|" + dup_key(title, data.start_date, data.project_name))
 
     def _map_status(self, raw) -> tuple[int, Optional[str]]:
         svc = self.tasks.statuses

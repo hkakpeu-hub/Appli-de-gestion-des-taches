@@ -1,5 +1,6 @@
-﻿import os
+import os
 from datetime import date, time, timedelta
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -45,6 +46,7 @@ def window(qapp, ctx):
     w = MainWindow(ctx)
     w.tray.hide()
     w.show()
+    w.enter_space(1)
     qapp.processEvents()
     yield w
     w._quitting = True
@@ -114,3 +116,70 @@ def test_quickadd_parser():
     with pytest.raises(ValidationError):
         parse_quick("X !nimportequoi", TODAY)
 
+
+
+def test_home_page_and_space_switching(window, qapp, ctx):
+    window.go_home()
+    qapp.processEvents()
+    assert window.root_stack.currentWidget() is window.home
+    assert window.home.grid1.count() - 1 == 3  # Travail, Personnel, Kingdom (+ tuile « Nouvel espace »)
+    perso = ctx.spaces.by_name("Personnel")
+    window.enter_space(perso.id)
+    qapp.processEvents()
+    assert window.root_stack.currentIndex() == 1
+    assert int(window.pages["dashboard"].kpis["total"].value.text()) == 0  # l'espace Personnel est vide
+    window.quick.setText("Appeler le plombier")
+    window.quick_add()
+    assert [t.title for t in ctx.tasks.all()] == ["Appeler le plombier"]
+    window.enter_space(1)
+    qapp.processEvents()
+    assert int(window.pages["dashboard"].kpis["total"].value.text()) == 6
+    # un espace désactivé disparaît de l'accueil
+    ctx.spaces.set_enabled(ctx.spaces.by_name("Kingdom").id, False)
+    window.go_home()
+    qapp.processEvents()
+    assert window.home.grid1.count() - 1 == 2
+
+
+def test_archive_project_from_projects_page(window, qapp, ctx, monkeypatch):
+    import suivi.ui.projects_page as pp
+    monkeypatch.setattr(pp, "confirm", lambda *a, **k: True)
+    window.go("projects")
+    page = window.pages["projects"]
+    page.refresh()
+    names = [ctx.projects.get(i).name for i in page._ids]
+    page.table.setCurrentCell(names.index("P0"), 0)
+    page.toggle_archive()
+    qapp.processEvents()
+    assert all(t.project_name != "P0" for t in ctx.tasks.all())
+    window.go("dashboard")
+    dash = window.pages["dashboard"]
+    dash.refresh()
+    assert int(dash.kpis["total"].value.text()) == 4  # 6 tâches - 2 du projet archivé
+
+
+def test_task_dialog_attachments(window, qapp, ctx, tmp_path, monkeypatch):
+    from suivi.ui.task_dialog import TaskDialog
+    ctx.settings.set("attachments_dir", str(tmp_path / "PJ"))
+    f = tmp_path / "devis.pdf"
+    f.write_bytes(b"%PDF-1.4 test")
+    t = ctx.tasks.all()[0]
+    dlg = TaskDialog(ctx, t.id)
+    dlg._att_add_files([str(f)])
+    assert dlg.att_list.count() == 1 and ctx.tasks.get(t.id).n_attach == 1
+    opened = []
+    import suivi.osutils as osu
+    monkeypatch.setattr(osu, "open_path", lambda p: opened.append(Path(p)))
+    monkeypatch.setattr(osu, "reveal_in_explorer", lambda p: opened.append(("reveal", Path(p))))
+    dlg.att_list.setCurrentRow(0)
+    dlg._att_open()
+    dlg._att_reveal()
+    assert opened[0].read_bytes() == b"%PDF-1.4 test" and opened[1][0] == "reveal"
+    # nouvelle tâche : les fichiers sont joints à l'enregistrement
+    new = TaskDialog(ctx, None)
+    new.title.setText("Avec pièce jointe")
+    new._att_add_files([str(f)])
+    assert new.pending and ctx.tasks.count() == 6
+    new._save()
+    created = [x for x in ctx.tasks.all() if x.title == "Avec pièce jointe"][0]
+    assert created.n_attach == 1

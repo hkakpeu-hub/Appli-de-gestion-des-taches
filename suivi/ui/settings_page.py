@@ -10,7 +10,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..ai import secrets
+from .. import osutils
 from ..core.models import KINDS
+from ..modules import MODULES
+from PySide6.QtWidgets import QFileDialog
 from .common import Page, confirm, page_header, show_error
 
 
@@ -74,6 +77,44 @@ class SettingsPage(Page):
         f.addRow("Responsable par défaut des nouvelles tâches", ad)
         lay.addWidget(g)
 
+        # espaces et modules
+        g = QGroupBox("Espaces et modules (page d'accueil)"); v = QVBoxLayout(g)
+        v.addWidget(QLabel("Chaque espace a ses propres projets et tâches (Travail, Personnel, Kingdom…). Un espace désactivé "
+                           "disparaît de l'accueil mais ses données restent intactes."))
+        self.space_table = QTableWidget(0, 3)
+        self.space_table.setHorizontalHeaderLabels(["Espace", "Couleur", "Actif"])
+        self.space_table.verticalHeader().setVisible(False)
+        self.space_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.space_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.space_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.space_table.setMinimumHeight(150)
+        v.addWidget(self.space_table)
+        row = QHBoxLayout()
+        for label, fn in (("Ajouter un espace…", self.add_space), ("Renommer / icône…", self.rename_space),
+                          ("Couleur…", self.color_space), ("Activer / désactiver", self.toggle_space), ("Supprimer…", self.delete_space)):
+            b = QPushButton(label); b.clicked.connect(fn); row.addWidget(b)
+        row.addStretch(); v.addLayout(row)
+        v.addWidget(QLabel("<b>Modules d'application</b> (tuiles de l'accueil) :"))
+        self.mod_checks: dict[str, QCheckBox] = {}
+        for m in MODULES:
+            cb = QCheckBox(f"{m.icon}  {m.label} — {m.description}" + ("" if m.available else "  (bientôt disponible)"))
+            cb.toggled.connect(self._modules_changed)
+            self.mod_checks[m.key] = cb
+            v.addWidget(cb)
+        lay.addWidget(g)
+
+        # pièces jointes
+        g = QGroupBox("Pièces jointes"); v = QVBoxLayout(g)
+        v.addWidget(QLabel("Les fichiers joints aux tâches sont rangés dans ce dossier (pas dans la base de données). "
+                           "Pensez à l'inclure dans vos sauvegardes : la sauvegarde de la base ne contient que les liens."))
+        self.att_label = QLabel(); self.att_label.setTextInteractionFlags(Qt.TextSelectableByMouse); self.att_label.setWordWrap(True)
+        v.addWidget(self.att_label)
+        row = QHBoxLayout()
+        b = QPushButton("Changer le dossier…"); b.clicked.connect(self.change_att_dir); row.addWidget(b)
+        b = QPushButton("Ouvrir le dossier"); b.clicked.connect(lambda: osutils.open_path(self.ctx.attachments.base_dir())); row.addWidget(b)
+        row.addStretch(); v.addLayout(row)
+        lay.addWidget(g)
+
         # statuts
         g = QGroupBox("Statuts"); v = QVBoxLayout(g)
         v.addWidget(QLabel("Libellés et couleurs personnalisables. La « nature » fixe le comportement : par exemple seule la nature "
@@ -125,6 +166,11 @@ class SettingsPage(Page):
             else:
                 w.setText(str(val))
         self._fill_statuses()
+        self._fill_spaces()
+        flags = s.get("modules") or {}
+        for key, cb in self.mod_checks.items():
+            cb.blockSignals(True); cb.setChecked(bool(flags.get(key))); cb.blockSignals(False)
+        self.att_label.setText(f"Dossier actuel : {self.ctx.attachments.base_dir()}")
         self._ai_status()
 
     def _ai_status(self) -> None:
@@ -250,3 +296,94 @@ class SettingsPage(Page):
             secrets.delete_api_key()
             self._ai_status()
             self.settings_saved.emit()
+
+    # -------------------------------------------------------------------- espaces / modules / pièces jointes
+    def _fill_spaces(self) -> None:
+        self._spaces = self.ctx.spaces.list()
+        self.space_table.setRowCount(len(self._spaces))
+        for r, sp in enumerate(self._spaces):
+            for col, v in enumerate([f"{sp.icon}  {sp.name}", sp.color, "oui" if sp.enabled else "non"]):
+                it = QTableWidgetItem(v)
+                if col == 1:
+                    it.setBackground(QColor(sp.color)); it.setForeground(QColor("white"))
+                self.space_table.setItem(r, col, it)
+
+    def _cur_space(self):
+        r = self.space_table.currentRow()
+        return self._spaces[r] if 0 <= r < len(self._spaces) else None
+
+    def add_space(self) -> None:
+        name, ok = QInputDialog.getText(self, "Nouvel espace", "Nom de l'espace (ex. Famille, Études) :")
+        if not ok:
+            return
+        icon, ok = QInputDialog.getText(self, "Nouvel espace", "Icône (un emoji, ex. 🎓) :", text="📁")
+        if ok:
+            try:
+                self.ctx.spaces.create(name, icon)
+            except Exception as exc:
+                return show_error(self, exc)
+            self._fill_spaces()
+
+    def rename_space(self) -> None:
+        sp = self._cur_space()
+        if not sp:
+            return
+        name, ok = QInputDialog.getText(self, "Renommer l'espace", "Nom :", text=sp.name)
+        if not ok:
+            return
+        icon, ok = QInputDialog.getText(self, "Icône de l'espace", "Icône (emoji) :", text=sp.icon)
+        if ok:
+            try:
+                self.ctx.spaces.update(sp.id, name, icon, sp.color)
+            except Exception as exc:
+                return show_error(self, exc)
+            self._fill_spaces()
+
+    def color_space(self) -> None:
+        sp = self._cur_space()
+        if sp:
+            col = QColorDialog.getColor(QColor(sp.color), self, "Couleur de l'espace")
+            if col.isValid():
+                self.ctx.spaces.update(sp.id, sp.name, sp.icon, col.name())
+                self._fill_spaces()
+
+    def toggle_space(self) -> None:
+        sp = self._cur_space()
+        if sp:
+            try:
+                self.ctx.spaces.set_enabled(sp.id, not sp.enabled)
+            except Exception as exc:
+                return show_error(self, exc)
+            self._fill_spaces()
+
+    def delete_space(self) -> None:
+        sp = self._cur_space()
+        if sp and confirm(self, "Supprimer l'espace", f"Supprimer l'espace « {sp.name} » ?\n(Possible uniquement s'il est vide.)",
+                          "Supprimer", danger=True):
+            try:
+                self.ctx.spaces.delete(sp.id)
+            except Exception as exc:
+                return show_error(self, exc)
+            self._fill_spaces()
+
+    def _modules_changed(self) -> None:
+        self.ctx.settings.set("modules", {k: cb.isChecked() for k, cb in self.mod_checks.items()})
+        self.ctx.tasks.notify_changed()
+
+    def change_att_dir(self) -> None:
+        new = QFileDialog.getExistingDirectory(self, "Choisir le dossier des pièces jointes", str(self.ctx.attachments.base_dir()))
+        if not new:
+            return
+        box = QMessageBox(QMessageBox.Question, "Pièces jointes", f"Nouveau dossier :\n{new}\n\nDéplacer aussi les fichiers déjà joints ?", parent=self)
+        move = box.addButton("Déplacer les fichiers", QMessageBox.AcceptRole)
+        keep = box.addButton("Ne rien déplacer", QMessageBox.DestructiveRole)
+        box.addButton("Annuler", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() not in (move, keep):
+            return
+        try:
+            n = self.ctx.attachments.change_base(new, move_files=box.clickedButton() is move)
+        except Exception as exc:
+            return show_error(self, exc, "Changement de dossier impossible")
+        self.att_label.setText(f"Dossier actuel : {self.ctx.attachments.base_dir()}")
+        QMessageBox.information(self, "Pièces jointes", f"Dossier mis à jour ({n} élément(s) déplacé(s)).")

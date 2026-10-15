@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QVBoxLayout, QWidget,
 )
 
+from ..core.spaces import CURRENT
 from ..core.tasks import EVENT_LABELS
 from .common import Page, confirm, fmt_date, fmt_dt, page_header, show_error
 
@@ -61,7 +62,7 @@ class HistoryPage(Page):
         self._trash_ids: list[int] = []
 
     def refresh(self) -> None:
-        events = self.ctx.tasks.history(None, 1000, self.event.currentData() or "", self.text.text())
+        events = self.ctx.tasks.history(None, 1000, self.event.currentData() or "", self.text.text(), space_id=CURRENT)
         self.table.setRowCount(len(events))
         for r, e in enumerate(events):
             for c, v in enumerate([fmt_dt(e.at), e.task_title, EVENT_LABELS.get(e.event, e.event), e.field, e.old_value, e.new_value]):

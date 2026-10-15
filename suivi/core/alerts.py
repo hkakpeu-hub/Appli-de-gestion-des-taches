@@ -137,7 +137,7 @@ class AlertEngine:
         if not self.settings.get("alerts_enabled"):
             return []
         stamp = iso_datetime(now)
-        tasks = self.tasks.all()
+        tasks = self.tasks.all(space_id=None)  # alertes de tous les espaces
         candidates = self.evaluate(tasks, now)
         keys = {c.key for c in candidates}
         changed = False
@@ -169,12 +169,17 @@ class AlertEngine:
         return [a for a in self.visible(now) if a.notified_at is None]
 
     # --------------------------------------------------------------- lecture
-    def _alert_query(self, extra: str, params: list) -> list[Alert]:
+    def _alert_query(self, extra: str, params: list, space_id=None) -> list[Alert]:
+        sp = self.tasks.scope.resolve(space_id)
+        if sp is not None:
+            extra += " AND t.space_id=?"
+            params = params + [sp]
         sql = f"""SELECT a.*, t.title AS task_title, t.deadline AS t_deadline, p.name AS project_name,
-                         s.label AS status_label
-                  FROM alerts a JOIN tasks t ON t.id=a.task_id
+                         s.label AS status_label, t.space_id AS space_id, sp.name AS space_name
+                  FROM alerts a JOIN tasks t ON t.id=a.task_id JOIN spaces sp ON sp.id=t.space_id
                   LEFT JOIN projects p ON p.id=t.project_id JOIN statuses s ON s.id=t.status_id
-                  WHERE a.resolved_at IS NULL AND t.deleted_at IS NULL {extra}
+                  WHERE a.resolved_at IS NULL AND t.deleted_at IS NULL
+                    AND (p.archived IS NULL OR p.archived=0) {extra}
                   ORDER BY CASE a.level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
                            a.created_at DESC"""
         return [
@@ -183,20 +188,21 @@ class AlertEngine:
                 message=r["message"], created_at=to_datetime(r["created_at"]), read_at=to_datetime(r["read_at"]),
                 snoozed_until=to_datetime(r["snoozed_until"]), notified_at=to_datetime(r["notified_at"]),
                 task_title=r["task_title"], project_name=r["project_name"] or "", deadline=to_date(r["t_deadline"]),
-                status_label=r["status_label"],
+                status_label=r["status_label"], space_id=r["space_id"], space_name=r["space_name"],
             )
             for r in self.db.conn.execute(sql, params)
         ]
 
-    def visible(self, now: Optional[datetime] = None, include_read: bool = True) -> list[Alert]:
+    def visible(self, now: Optional[datetime] = None, include_read: bool = True, space_id=None) -> list[Alert]:
+        """Alertes visibles. ``space_id=None`` : tous les espaces ; ``CURRENT`` : l'espace affiché."""
         stamp = iso_datetime(now or self.tasks.clock())
         extra = "AND (a.snoozed_until IS NULL OR a.snoozed_until<=?)"
         if not include_read:
             extra += " AND a.read_at IS NULL"
-        return self._alert_query(extra, [stamp])
+        return self._alert_query(extra, [stamp], space_id)
 
-    def unread_count(self, now: Optional[datetime] = None) -> int:
-        return len(self.visible(now, include_read=False))
+    def unread_count(self, now: Optional[datetime] = None, space_id=None) -> int:
+        return len(self.visible(now, include_read=False, space_id=space_id))
 
     # --------------------------------------------------------------- actions
     def mark_notified(self, ids: list[int]) -> None:
@@ -212,10 +218,15 @@ class AlertEngine:
             c.execute("UPDATE alerts SET read_at=? WHERE id=?", (stamp, alert_id))
         self._notify()
 
-    def mark_all_read(self) -> None:
+    def mark_all_read(self, space_id=None) -> None:
         stamp = iso_datetime(self.tasks.clock())
+        sp = self.tasks.scope.resolve(space_id)
         with self.db.transaction() as c:
-            c.execute("UPDATE alerts SET read_at=? WHERE read_at IS NULL AND resolved_at IS NULL", (stamp,))
+            if sp is None:
+                c.execute("UPDATE alerts SET read_at=? WHERE read_at IS NULL AND resolved_at IS NULL", (stamp,))
+            else:
+                c.execute("UPDATE alerts SET read_at=? WHERE read_at IS NULL AND resolved_at IS NULL "
+                          "AND task_id IN (SELECT id FROM tasks WHERE space_id=?)", (stamp, sp))
         self._notify()
 
     def snooze(self, alert_id: int, until: datetime) -> None:

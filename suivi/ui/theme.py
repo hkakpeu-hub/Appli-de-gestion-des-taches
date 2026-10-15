@@ -74,5 +74,12 @@ QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QToolTip {{ background: {NAVY}; color: white; border: none; padding: 5px; }}
 QGroupBox {{ border: 1px solid {BORDER}; border-radius: 8px; margin-top: 12px; padding: 12px; background: white; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 12px; padding: 0 4px; font-weight: 600; }}
+QWidget#homeBody, QWidget#home {{ background: #F5F5F7; }}
+QFrame#tile {{ background: white; border: 1px solid #E5E5EA; border-radius: 22px; }}
+QFrame#tile:hover {{ border: 1px solid #0A84FF; background: #FCFDFF; }}
+QFrame#tileDashed {{ background: transparent; border: 1.5px dashed #C7C7CC; border-radius: 22px; }}
+QFrame#tileDashed:hover {{ border-color: #0A84FF; }}
+QPushButton#homeBtn {{ background: transparent; border: none; color: #0A66D6; font-size: 11pt; padding: 6px 12px; border-radius: 14px; }}
+QPushButton#homeBtn:hover {{ background: #E8F0FE; }}
 QStatusBar {{ background: white; border-top: 1px solid {BORDER}; }}
 """

@@ -88,8 +88,31 @@ class Status:
 
 
 @dataclass
+class Space:
+    id: int
+    name: str
+    icon: str = "✔"
+    color: str = "#2563EB"
+    kind: str = "tasks"
+    position: int = 0
+    enabled: bool = True
+
+
+@dataclass
+class Attachment:
+    id: int
+    task_id: int
+    display_name: str
+    path: str
+    is_relative: bool
+    size: Optional[int]
+    created_at: datetime
+
+
+@dataclass
 class Project:
     id: int
+    space_id: int
     name: str
     color: Optional[str] = None
     description: Optional[str] = None
@@ -123,6 +146,8 @@ class Task:
     status_changed_at: datetime
     deleted_at: Optional[datetime] = None
     project_color: Optional[str] = None
+    space_id: int = 1
+    n_attach: int = 0
 
     @property
     def is_closed(self) -> bool:
@@ -164,6 +189,8 @@ class Task:
             status_changed_at=to_datetime(r["status_changed_at"]),
             deleted_at=to_datetime(r["deleted_at"]),
             project_color=r["project_color"],
+            space_id=r["space_id"],
+            n_attach=r["n_attach"],
         )
 
 
@@ -183,6 +210,8 @@ class Alert:
     project_name: str = ""
     deadline: Optional[date] = None
     status_label: str = ""
+    space_id: int = 1
+    space_name: str = ""
 
 
 @dataclass
@@ -226,6 +255,7 @@ class TaskInput:
     completed_at: Optional[datetime] = None
     source: str = ""
     comments: list[str] = field(default_factory=list)
+    space_id: Optional[int] = None  # None = espace courant
 
 
 class ValidationError(ValueError):

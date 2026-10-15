@@ -101,6 +101,53 @@ MIGRATIONS: list[str] = [
     CREATE INDEX ix_alerts_task ON alerts(task_id);
     CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
     """,
+    # --- version 2 : espaces (Travail / Personnel / Kingdom…), pièces jointes -----------------
+    """
+    CREATE TABLE spaces(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        icon TEXT NOT NULL DEFAULT '✔',
+        color TEXT NOT NULL DEFAULT '#2563EB',
+        kind TEXT NOT NULL DEFAULT 'tasks',
+        position INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1
+    );
+    INSERT INTO spaces(name,icon,color,position) VALUES ('Travail','💼','#2563EB',0);
+    INSERT INTO spaces(name,icon,color,position) VALUES ('Personnel','🏠','#16A34A',1);
+    INSERT INTO spaces(name,icon,color,position) VALUES ('Kingdom','⛪','#7C3AED',2);
+
+    CREATE TABLE projects_new(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        space_id INTEGER NOT NULL DEFAULT 1 REFERENCES spaces(id),
+        name TEXT NOT NULL COLLATE NOCASE,
+        color TEXT,
+        description TEXT,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        UNIQUE(space_id, name)
+    );
+    INSERT INTO projects_new(id,space_id,name,color,description,archived,created_at)
+        SELECT id,1,name,color,description,archived,created_at FROM projects;
+    DROP TABLE projects;
+    ALTER TABLE projects_new RENAME TO projects;
+    -- le projet « Personnel » de l'ancien classeur rejoint l'espace Personnel
+    UPDATE projects SET space_id=2 WHERE name='Personnel' COLLATE NOCASE;
+
+    ALTER TABLE tasks ADD COLUMN space_id INTEGER NOT NULL DEFAULT 1 REFERENCES spaces(id);
+    UPDATE tasks SET space_id=2 WHERE project_id IN (SELECT id FROM projects WHERE space_id=2);
+    CREATE INDEX ix_tasks_space ON tasks(space_id);
+
+    CREATE TABLE attachments(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        display_name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        is_relative INTEGER NOT NULL DEFAULT 0,
+        size INTEGER,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX ix_attachments_task ON attachments(task_id);
+    """,
 ]
 
 
@@ -138,9 +185,14 @@ class Database:
     # -- migrations --------------------------------------------------------
     def migrate(self) -> None:
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        if 0 < version < len(MIGRATIONS):
+            # base existante : copie de sécurité avant toute modification du schéma
+            self.conn.commit()
+            self.backup_to(self.path.with_name(f"{self.path.stem}_avant_migration_v{version}.db"))
         for i in range(version, len(MIGRATIONS)):
             log.info("Migration de la base vers la version %d", i + 1)
             try:
+                self.conn.execute("PRAGMA foreign_keys=OFF")  # requis pour reconstruire une table
                 self.conn.executescript("BEGIN;" + MIGRATIONS[i])
                 if i == 0:
                     self._seed_statuses()
@@ -149,6 +201,8 @@ class Database:
             except Exception:
                 self.conn.rollback()
                 raise
+            finally:
+                self.conn.execute("PRAGMA foreign_keys=ON")
 
     def _seed_statuses(self) -> None:
         for pos, (label, kind, color) in enumerate(DEFAULT_STATUSES):

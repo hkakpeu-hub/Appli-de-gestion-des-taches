@@ -22,9 +22,23 @@ Exécutable `.exe` (facultatif) : lancez **`build_exe.bat`** → `dist\SuiviTach
 | Base de données | `%LOCALAPPDATA%\SuiviTaches\taches.db` |
 | Sauvegardes | `%LOCALAPPDATA%\SuiviTaches\sauvegardes\` |
 | Journaux techniques | `%LOCALAPPDATA%\SuiviTaches\journaux\` |
+| Pièces jointes | `%LOCALAPPDATA%\SuiviTaches\pieces_jointes\` (dossier modifiable dans Paramètres) |
 
 Les données sont volontairement **hors du dossier du code** (et hors OneDrive, qui peut corrompre une base ouverte) :
 mettre à jour ou déplacer l'application ne touche jamais aux données.
+
+## Page d'accueil, espaces et modules
+
+Au lancement, une page d'accueil épurée présente vos **espaces** : *Travail*, *Personnel* et *Kingdom* (église).
+Chaque espace a ses propres projets, tâches, tableau de bord, planning et historique ; les **alertes** couvrent tous les
+espaces (le compteur de l'accueil les additionne, et la notification Windows indique l'espace concerné).
+- Cliquez sur une tuile pour entrer dans un espace ; « ‹ Accueil » (en haut de la barre latérale) pour revenir.
+- **Paramètres → Espaces et modules** : ajouter un espace (nom, icône, couleur), le renommer, le désactiver (il disparaît
+  de l'accueil, ses données restent) ou le supprimer s'il est vide ; activer les modules facultatifs (Budget personnel :
+  tuile « bientôt disponible », le module lui-même reste à développer).
+- Clic droit sur une tâche → **Déplacer vers l'espace…**.
+- À l'import Excel, vous choisissez l'espace de destination de chaque feuille ; la feuille « Actions personnelles » et les
+  lignes dont le projet s'appelle « Personnel » vont dans l'espace Personnel.
 
 ## Utilisation courante
 
@@ -42,6 +56,15 @@ mettre à jour ou déplacer l'application ne touche jamais aux données.
 - **Alertes** : centre de notifications (compteur dans le menu), marquer lu, reporter (1 h, 3 h, demain, 3 j),
   ouvrir la tâche. Notifications natives Windows ; en fermant la fenêtre, l'application reste dans la zone de
   notification pour continuer à alerter (*Quitter* via clic droit sur l'icône).
+- **Archiver un projet** (page Projets → *Archiver*) : toutes ses tâches disparaissent des listes, recherches, tableau de bord,
+  graphiques, planning, alertes et exports. Rien n'est supprimé : cochez « Afficher les projets archivés » puis
+  *Désarchiver* pour tout restituer. On ne peut plus créer de tâche dans un projet archivé.
+- **Pièces jointes** (fenêtre d'une tâche → onglet *Pièces jointes*) : bouton ou glisser-déposer de photos, Word, Excel,
+  PowerPoint, PDF… Les fichiers sont **copiés dans le dossier des pièces jointes** (`<dossier>\<espace>\<n° - tâche>\`),
+  la base ne contient que le chemin (elle reste légère). Double-clic = ouvre le fichier ; *Afficher dans l'explorateur* le
+  sélectionne dans son dossier. Option « lien » : le fichier reste à son emplacement d'origine. Un 📎 apparaît dans la liste.
+  Changer le dossier (Paramètres → Pièces jointes) peut déplacer les fichiers existants. **Attention** : la sauvegarde de
+  la base ne contient pas les fichiers joints — incluez ce dossier dans vos propres sauvegardes.
 - **Suppression** : corbeille (Historique → Corbeille) avec restauration ; suppression définitive sur confirmation.
 
 ## Règles métier clés
@@ -68,7 +91,8 @@ mettre à jour ou déplacer l'application ne touche jamais aux données.
 ## Sauvegarde et restauration
 
 Automatique (réglable : intervalle, nombre conservé) au démarrage et pendant l'utilisation, plus avant chaque
-import/restauration. Restauration depuis *Importation / exportation* ; l'état précédent est conservé avant.
+import/restauration. Avant une mise à niveau du schéma de la base, une copie `taches_avant_migration_vN.db` est créée à côté de `taches.db`.
+Restauration depuis *Importation / exportation* ; l'état précédent est conservé avant.
 
 ## Assistant IA (facultatif, désactivé par défaut)
 

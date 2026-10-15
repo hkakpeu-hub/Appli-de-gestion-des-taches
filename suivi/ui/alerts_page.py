@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.alerts import KIND_LABELS, LEVEL_COLORS, LEVELS
+from ..core.spaces import CURRENT
 from .common import Page, fmt_date, fmt_dt, page_header
 from .task_dialog import TaskDialog
 
@@ -31,7 +32,7 @@ class AlertsPage(Page):
         bar.addStretch()
         b_open = QPushButton("Ouvrir la tâche"); b_open.clicked.connect(self._open)
         b_read = QPushButton("Marquer comme lue"); b_read.clicked.connect(self._read)
-        b_all = QPushButton("Tout marquer comme lu"); b_all.clicked.connect(self.ctx.alerts.mark_all_read)
+        b_all = QPushButton("Tout marquer comme lu"); b_all.clicked.connect(lambda: self.ctx.alerts.mark_all_read(CURRENT))
         self.b_snooze = QPushButton("Reporter ▾")
         menu = QMenu(self.b_snooze)
         for label, fn in (("Dans 1 heure", lambda: timedelta(hours=1)), ("Dans 3 heures", lambda: timedelta(hours=3)),
@@ -65,7 +66,7 @@ class AlertsPage(Page):
 
     def refresh(self) -> None:
         now = self.ctx.clock()
-        self._alerts = self.ctx.alerts.visible(now, include_read=self.show_read.isChecked())
+        self._alerts = self.ctx.alerts.visible(now, include_read=self.show_read.isChecked(), space_id=CURRENT)
         unread = sum(1 for a in self._alerts if a.read_at is None)
         self.sub.setText(f"{unread} non lue(s) · {len(self._alerts)} affichée(s)")
         self.table.setRowCount(len(self._alerts))

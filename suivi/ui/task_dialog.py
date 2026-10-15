@@ -4,8 +4,11 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox, QFileDialog, QMessageBox,
     QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPlainTextEdit, QPushButton, QSpinBox, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
     QHeaderView, QAbstractItemView,
@@ -13,7 +16,35 @@ from PySide6.QtWidgets import (
 
 from ..core.models import PRIORITIES, PRIORITY_LABELS, KIND_DONE, TaskInput
 from ..core.tasks import EVENT_LABELS
-from .common import OptDate, OptTime, fmt_dt, show_error
+from .. import osutils
+from .common import OptDate, OptTime, confirm, fmt_dt, show_error
+
+
+ICONS = {".pdf": "📕", ".doc": "📘", ".docx": "📘", ".xls": "📗", ".xlsx": "📗", ".csv": "📗", ".ppt": "📙",
+         ".pptx": "📙", ".png": "🖼", ".jpg": "🖼", ".jpeg": "🖼", ".gif": "🖼", ".webp": "🖼", ".zip": "🗜",
+         ".txt": "📄", ".msg": "✉", ".eml": "✉"}
+
+
+class DropList(QListWidget):
+    """Liste qui accepte des fichiers glissés depuis l'explorateur."""
+
+    files_dropped = Signal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    dragMoveEvent = dragEnterEvent
+
+    def dropEvent(self, e):
+        files = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if files:
+            self.files_dropped.emit(files)
+            e.acceptProposedAction()
 
 
 class TaskDialog(QDialog):
@@ -22,6 +53,7 @@ class TaskDialog(QDialog):
         self.ctx = ctx
         self.task_id = task_id
         self.saved_id: Optional[int] = None
+        self.pending: list[tuple[str, bool]] = []  # fichiers à joindre après création de la tâche
         self.setWindowTitle("Nouvelle tâche" if task_id is None else f"Tâche #{task_id}")
         self.resize(760, 640)
         self.task = ctx.tasks.get(task_id) if task_id else None
@@ -30,6 +62,7 @@ class TaskDialog(QDialog):
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, 1)
         self._build_details()
+        self._build_attachments()
         if self.task:
             self._build_comments()
             self._build_history()
@@ -153,9 +186,8 @@ class TaskDialog(QDialog):
                 t = self.ctx.tasks.update(self.task.id, data)
             else:
                 t = self.ctx.tasks.create(data)
-                note = self.new_comment.toPlainText().strip() if hasattr(self, "new_comment") else ""
-                if note:
-                    self.ctx.tasks.add_comment(t.id, note)
+                for path, copy in self.pending:
+                    self.ctx.attachments.add(t.id, path, copy)
         except Exception as exc:
             show_error(self, exc, "Enregistrement impossible")
             return
@@ -214,3 +246,107 @@ class TaskDialog(QDialog):
         for r, e in enumerate(events):
             for c, v in enumerate([fmt_dt(e.at), EVENT_LABELS.get(e.event, e.event), e.field, e.old_value, e.new_value]):
                 self.hist.setItem(r, c, QTableWidgetItem(v))
+
+
+    # ------------------------------------------------------------ onglet Pièces jointes
+    def _build_attachments(self) -> None:
+        page = QWidget(); lay = QVBoxLayout(page)
+        hint = QLabel("Photos, Word, Excel, PowerPoint, PDF… Les fichiers sont rangés dans le dossier des pièces jointes "
+                      "(réglable dans Paramètres), pas dans la base de données. Glissez-déposez des fichiers ici.")
+        hint.setWordWrap(True); hint.setObjectName("muted")
+        lay.addWidget(hint)
+        self.att_list = DropList()
+        self.att_list.itemDoubleClicked.connect(lambda *_: self._att_open())
+        self.att_list.files_dropped.connect(self._att_add_files)
+        lay.addWidget(self.att_list, 1)
+        self.att_copy = QCheckBox("Copier le fichier dans le dossier des pièces jointes (recommandé) — sinon seul un lien est conservé")
+        self.att_copy.setChecked(True)
+        lay.addWidget(self.att_copy)
+        row = QHBoxLayout()
+        for label, fn in (("＋ Ajouter des fichiers…", self._att_pick), ("Ouvrir", self._att_open),
+                          ("Afficher dans l'explorateur", self._att_reveal), ("Retirer", self._att_remove)):
+            b = QPushButton(label); b.clicked.connect(fn); row.addWidget(b)
+        row.addStretch()
+        lay.addLayout(row)
+        self.tabs.addTab(page, "Pièces jointes")
+        self._att_refresh()
+
+    def _att_refresh(self) -> None:
+        self.att_list.clear()
+        if self.task:
+            for a in self.ctx.attachments.list(self.task.id):
+                ok = self.ctx.attachments.exists(a)
+                size = f"{(a.size or 0) / 1024:,.0f} Ko".replace(",", " ")
+                item = QListWidgetItem(f"{ICONS.get(Path(a.display_name).suffix.lower(), '📎')}  {a.display_name}   ·   {size}"
+                                       + ("" if ok else "   ⚠ fichier introuvable"))
+                item.setData(Qt.UserRole, ("saved", a.id))
+                if not ok:
+                    item.setToolTip(f"Introuvable : {self.ctx.attachments.resolve(a)}")
+                self.att_list.addItem(item)
+        for path, copy in self.pending:
+            item = QListWidgetItem(f"{ICONS.get(Path(path).suffix.lower(), '📎')}  {Path(path).name}   ·   (sera joint à l'enregistrement)")
+            item.setData(Qt.UserRole, ("pending", path))
+            self.att_list.addItem(item)
+        self.tabs.setTabText(self.tabs.indexOf(self.att_list.parentWidget()), f"Pièces jointes ({self.att_list.count()})"
+                             if self.att_list.count() else "Pièces jointes")
+
+    def _att_pick(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(self, "Choisir les fichiers à joindre")
+        if files:
+            self._att_add_files(files)
+
+    def _att_add_files(self, files: list) -> None:
+        for path in files:
+            try:
+                if self.task:
+                    self.ctx.attachments.add(self.task.id, path, self.att_copy.isChecked())
+                elif Path(path).is_file():
+                    self.pending.append((path, self.att_copy.isChecked()))
+            except Exception as exc:
+                show_error(self, exc, "Pièce jointe impossible")
+        self._att_refresh()
+
+    def _att_current(self):
+        it = self.att_list.currentItem()
+        return it.data(Qt.UserRole) if it else None
+
+    def _att_path(self, cur) -> Optional[Path]:
+        kind, val = cur
+        return Path(val) if kind == "pending" else self.ctx.attachments.resolve(self.ctx.attachments.get(val))
+
+    def _att_open(self) -> None:
+        cur = self._att_current()
+        if not cur:
+            return
+        p = self._att_path(cur)
+        if not p.is_file():
+            return QMessageBox.warning(self, "Fichier introuvable", f"Le fichier n'existe plus à cet emplacement :\n{p}")
+        try:
+            osutils.open_path(p)
+        except OSError as exc:
+            show_error(self, exc, "Ouverture impossible")
+
+    def _att_reveal(self) -> None:
+        cur = self._att_current()
+        if cur:
+            osutils.reveal_in_explorer(self._att_path(cur))
+
+    def _att_remove(self) -> None:
+        cur = self._att_current()
+        if not cur:
+            return
+        kind, val = cur
+        if kind == "pending":
+            self.pending = [x for x in self.pending if x[0] != val]
+        else:
+            att = self.ctx.attachments.get(val)
+            box = QMessageBox(QMessageBox.Question, "Retirer la pièce jointe", f"Retirer « {att.display_name} » de la tâche ?", parent=self)
+            keep = box.addButton("Retirer (garder le fichier)", QMessageBox.AcceptRole)
+            kill = box.addButton("Retirer et supprimer le fichier" if att.is_relative else "Retirer", QMessageBox.DestructiveRole)
+            box.addButton("Annuler", QMessageBox.RejectRole)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked not in (keep, kill):
+                return
+            self.ctx.attachments.remove(val, delete_file=(clicked is kill and att.is_relative))
+        self._att_refresh()

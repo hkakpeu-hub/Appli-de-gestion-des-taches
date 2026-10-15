@@ -25,8 +25,10 @@ class ProjectsPage(Page):
         root.addWidget(header)
 
         self.show_archived = QCheckBox("Afficher les projets archivés")
+        self.archive_note = QLabel(); self.archive_note.setObjectName("muted")
         self.show_archived.toggled.connect(self.refresh)
         root.addWidget(self.show_archived)
+        root.addWidget(self.archive_note)
 
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(["Projet", "Actions", "Ouvertes", "En retard", "Bloquées", "Terminées", "Avancement", "Indice de charge"])
@@ -41,7 +43,7 @@ class ProjectsPage(Page):
         foot = QHBoxLayout()
         for label, fn, name in (("Ouvrir les tâches", lambda: self._open(self.table.currentRow()), ""),
                                 ("Renommer…", self.rename, ""), ("Couleur…", self.recolor, ""),
-                                ("Archiver / désarchiver", self.toggle_archive, ""), ("Supprimer…", self.delete, "danger")):
+                                ("Archiver / Désarchiver", self.toggle_archive, ""), ("Supprimer…", self.delete, "danger")):
             b = QPushButton(label); b.clicked.connect(fn)
             if name:
                 b.setObjectName(name)
@@ -51,8 +53,12 @@ class ProjectsPage(Page):
         self._ids: list[int] = []
 
     def refresh(self) -> None:
+        n_arch = self.ctx.projects.archived_count()
+        self.archive_note.setText(
+            f"{n_arch} projet(s) archivé(s) : leurs tâches sont masquées partout (listes, tableau de bord, alertes, exports)."
+            if n_arch else "")
         projects = self.ctx.projects.list(include_archived=self.show_archived.isChecked())
-        stats = {s.name: s for s in metrics.project_stats(self.ctx.tasks.all(), self.ctx.clock().date())}
+        stats = {s.name: s for s in metrics.project_stats(self.ctx.tasks.all(include_archived=True), self.ctx.clock().date())}
         self._ids = [p.id for p in projects]
         self.table.setRowCount(len(projects))
         for r, p in enumerate(projects):
@@ -65,7 +71,7 @@ class ProjectsPage(Page):
                 if c:
                     it.setTextAlignment(Qt.AlignCenter)
                 if c == 0:
-                    it.setForeground(QColor(p.color or "#334155"))
+                    it.setForeground(QColor("#94A3B8" if p.archived else (p.color or "#334155")))
                     f = it.font(); f.setBold(True); it.setFont(f)
                 if c == 3 and s and s.overdue:
                     it.setForeground(QColor("#DC2626"))
@@ -111,10 +117,19 @@ class ProjectsPage(Page):
 
     def toggle_archive(self) -> None:
         p = self._current()
-        if p:
-            self.ctx.projects.update(p.id, p.name, p.color, p.description, not p.archived)
+        if not p:
+            return
+        if p.archived:
+            self.ctx.projects.set_archived(p.id, False)
             self.ctx.tasks.notify_changed()
-
+            return
+        n = sum(1 for t in self.ctx.tasks.all() if t.project_id == p.id)
+        if confirm(self, "Archiver le projet",
+                   f"Archiver « {p.name} » ?\n\nSes {n} tâche(s) n'apparaîtront plus dans les listes, le tableau de bord, "
+                   "les alertes ni les exports. Rien n'est supprimé : vous pourrez le désarchiver à tout moment "
+                   "(cochez « Afficher les projets archivés »).", "Archiver"):
+            self.ctx.projects.set_archived(p.id, True)
+            self.ctx.tasks.notify_changed()
     def delete(self) -> None:
         p = self._current()
         if p and confirm(self, "Supprimer le projet", f"Supprimer définitivement le projet « {p.name} » ?\n"
