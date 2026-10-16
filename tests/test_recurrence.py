@@ -71,21 +71,8 @@ def test_no_past_occurrences_and_deleted_not_recreated(ctx, make):
     assert len([t for t in ctx.tasks.all(include_deleted=True) if t.start_date == first.start_date]) == 1
 
 
-def test_auto_close_events(ctx, clock):
-    ctx.recurrences.create(culte(auto_close=True, weekdays=[1], start_date=TODAY))  # mardis
-    today_task = [t for t in ctx.tasks.all() if t.start_date == TODAY][0]
-    assert today_task.is_active  # 09:00 : le créneau 07-11 n'est pas terminé
-    clock.now = datetime(2026, 10, 13, 11, 30)
-    ctx.recurrences.sync()
-    assert ctx.tasks.get(today_task.id).status_kind == "done"
-    ctx.alerts.run()
-    assert all(a.task_id != today_task.id for a in ctx.alerts.visible())  # pas de retard pour un événement
-    nxt = [t for t in ctx.tasks.all() if t.start_date == date(2026, 10, 20)][0]
-    assert nxt.is_active
-
-
-def test_not_auto_closed_becomes_overdue(ctx, clock):
-    ctx.recurrences.create(culte(auto_close=False, weekdays=[1]))
+def test_task_series_overdue_when_not_done(ctx, clock):
+    ctx.recurrences.create(culte(weekdays=[1]))
     clock.now = datetime(2026, 10, 14, 9, 0)
     ctx.recurrences.sync()
     today_task = [t for t in ctx.tasks.all() if t.start_date == TODAY][0]

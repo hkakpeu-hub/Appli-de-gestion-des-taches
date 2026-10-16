@@ -61,11 +61,11 @@ class TaskModel(QAbstractTableModel):
             return t
         if role == Qt.DisplayRole:
             return [
-                t.priority_label, ("↻ " if t.series_id else "") + ("📎 " if t.n_attach else "") + t.title, t.project_name, t.status_label, t.assignee,
+                t.priority_label, ("↻ " if t.series_id else "") + ("🗓 " if t.event_id else "") + ("📎 " if t.n_attach else "") + t.title, t.project_name, t.status_label, t.assignee,
                 fmt_date(t.start_date), fmt_date(t.deadline), due_text(t, today), t.updated_at.strftime("%d/%m/%Y"),
             ][c]
         if role == Qt.ToolTipRole and c == 1:
-            return t.title + (f"\n\n{t.description}" if t.description else "")
+            return t.title + (f"\n🗓 Événement : {t.event_title}" if t.event_id else "") + (f"\n\n{t.description}" if t.description else "")
         if role == Qt.ForegroundRole:
             if t.is_closed:
                 return QBrush(QColor(theme.MUTED))

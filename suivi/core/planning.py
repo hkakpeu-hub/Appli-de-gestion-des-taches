@@ -23,6 +23,27 @@ class Block:
         return int((self.end - self.start).total_seconds() // 60)
 
 
+@dataclass
+class EventBlock:
+    """Créneau d'un événement (fond du planning ; ne compte pas dans les chevauchements de tâches)."""
+    event: object
+    start: datetime
+    end: datetime
+
+    @property
+    def minutes(self) -> int:
+        return int((self.end - self.start).total_seconds() // 60)
+
+
+def event_blocks_for_day(events, day: date) -> list[EventBlock]:
+    out = []
+    for e in events:
+        iv = e.interval
+        if e.date == day and iv:
+            out.append(EventBlock(e, *iv))
+    return sorted(out, key=lambda b: (b.start, b.end))
+
+
 def week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..core import rules
 from ..core.metrics import compute_dashboard
@@ -52,6 +52,11 @@ def build_context(ctx: AppContext, now: datetime | None = None) -> str:
         "taches_ouvertes": [_task_dict(t, today) for t in shown],
         "taches_ouvertes_non_transmises": max(0, len(active) - len(shown)),
         "terminees_recemment": [_task_dict(t, today) for t in recent_done],
+        "evenements_a_venir": [
+            {"id": e.id, "titre": e.title, "date": e.date.isoformat(), "debut": e.start_time and e.start_time.strftime("%H:%M"),
+             "fin": e.end_time and e.end_time.strftime("%H:%M"), "lieu": e.location or None, "taches_liees": e.n_tasks, "taches_faites": e.n_done}
+            for e in ctx.events.list(frm=today, to=today + timedelta(days=30))
+        ],  # les événements ne sont pas des tâches
         "terminees_par_mois": dash.completed_series,
         "charge_par_semaine": [{"semaine": w, "taches": n, "minutes_estimees": m} for w, n, m in dash.workload_series],
     }

@@ -59,6 +59,7 @@ class SettingsPage(Page):
 
         g = QGroupBox("Tableau de bord et planning"); f = QFormLayout(g)
         f.addRow("« Échéances à venir » : horizon", spin("upcoming_days", 1, 90, " jours"))
+        f.addRow("« Événements à venir » : horizon", spin("events_days", 1, 120, " jours"))
         f.addRow("Tâche « sans mise à jour » après", spin("stale_days", 1, 365, " jours"))
         f.addRow("Début de la journée de travail", spin("work_start_hour", 0, 23, " h"))
         f.addRow("Fin de la journée de travail", spin("work_end_hour", 1, 24, " h"))

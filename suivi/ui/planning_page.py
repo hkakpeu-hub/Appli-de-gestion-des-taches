@@ -15,6 +15,7 @@ from ..core import planning
 from ..core.models import to_date
 from . import theme
 from .common import Card, Page, fmt_date, show_error
+from .event_dialog import EventDialog
 from .recurrence_dialog import RecurrenceDialog, RecurrenceManager
 from .task_dialog import TaskDialog
 
@@ -48,6 +49,9 @@ class TodayCalendar(QCalendarWidget):
             painter.setBrush(QColor(theme.ACCENT))
             painter.drawEllipse(QPointF(rect.center().x(), rect.bottom() - 4), 2.2, 2.2)
         painter.restore()
+
+
+EVENT_COLOR = "#7C3AED"
 
 
 class DayHeader(QWidget):
@@ -86,6 +90,7 @@ class DayHeader(QWidget):
 
 class TimeGrid(QWidget):
     open_task = Signal(int)
+    open_event = Signal(int)
     create_at = Signal(object, object)  # (date, time)
     schedule_changed = Signal(int, object, object, object)  # (id, date, début, fin)
 
@@ -94,6 +99,8 @@ class TimeGrid(QWidget):
         self.setMouseTracking(True)
         self.days: list[date] = []
         self.blocks: dict[date, list[planning.Block]] = {}
+        self.eblocks: dict[date, list] = {}
+        self._erects: list = []
         self.free: dict[date, list] = {}
         self.h0, self.h1 = 7, 20
         self.now = datetime.now()
@@ -104,8 +111,9 @@ class TimeGrid(QWidget):
     def _update_size(self):
         self.setMinimumHeight((self.h1 - self.h0) * HOUR_H + 2)
 
-    def set_data(self, days, blocks, free, h0, h1, now):
+    def set_data(self, days, blocks, free, h0, h1, now, eblocks=None):
         self.days, self.blocks, self.free, self.h0, self.h1, self.now = days, blocks, free, h0, h1, now
+        self.eblocks = eblocks or {}
         self._update_size()
         self.update()
 
@@ -154,6 +162,26 @@ class TimeGrid(QWidget):
         for i in range(n + 1):
             x = GUTTER + i * w
             p.drawLine(int(x), 0, int(x), self.height())
+        # événements : fond violet translucide sous les tâches
+        self._erects = []
+        for i, d in enumerate(self.days):
+            for eb in self.eblocks.get(d, []):
+                r = QRectF(GUTTER + i * w + 1, self._y(eb.start), w - 2, max(20, self._y(eb.end) - self._y(eb.start)))
+                self._erects.append((r, eb))
+                col = QColor(EVENT_COLOR)
+                p.setPen(QPen(col, 1.5, Qt.DashLine))
+                p.setBrush(QColor(col.red(), col.green(), col.blue(), 34))
+                p.drawRoundedRect(r, 6, 6)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(col.red(), col.green(), col.blue(), 215))
+                p.drawRoundedRect(QRectF(r.left(), r.top(), r.width(), 18), 6, 6)
+                e = eb.event
+                f = QFont(self.font()); f.setPointSizeF(8.0); f.setBold(True); p.setFont(f)
+                p.setPen(QColor("white"))
+                prog = f"  ✓ {e.n_done}/{e.n_tasks}" if e.n_tasks else ""
+                p.drawText(QRectF(r.left() + 6, r.top(), r.width() - 10, 18).toRect(), Qt.AlignVCenter | Qt.AlignLeft,
+                           QFontMetrics(f).elidedText(f"🗓 {eb.start:%H:%M} {e.title}{prog}", Qt.ElideRight, int(r.width() - 10)))
+                p.setFont(self.font())
         # blocs
         self._rects = []
         fm = QFontMetrics(self.font())
@@ -207,10 +235,19 @@ class TimeGrid(QWidget):
                 return r, b
         return None
 
+    def _event_at(self, pos):
+        for r, eb in reversed(self._erects):
+            if r.contains(pos):
+                return eb
+        return None
+
     def mouseDoubleClickEvent(self, e):
         hit = self._block_at(e.position())
         if hit:
             return self.open_task.emit(hit[1].task.id)
+        eb = self._event_at(e.position())
+        if eb:
+            return self.open_event.emit(eb.event.id)
         slot = self._pos_to_slot(e.position().x(), e.position().y())
         if slot and e.position().x() > GUTTER:
             self.create_at.emit(slot[0], time(slot[1] // 60, slot[1] % 60))
@@ -232,7 +269,14 @@ class TimeGrid(QWidget):
                 self.setToolTip(f"{b.task.title}\n{b.start:%H:%M} – {b.end:%H:%M} · {b.task.status_label}\n"
                                 f"Projet : {b.task.project_name or '—'}" + ("\n⚠ Chevauchement" if b.overlaps else ""))
             else:
-                self.setCursor(Qt.ArrowCursor); self.setToolTip("")
+                eb = self._event_at(pos)
+                if eb:
+                    ev = eb.event
+                    self.setCursor(Qt.PointingHandCursor)
+                    self.setToolTip(f"🗓 {ev.title}\n{eb.start:%H:%M} – {eb.end:%H:%M}" + (f" · {ev.location}" if ev.location else "")
+                                    + (f"\nTâches : {ev.n_done}/{ev.n_tasks} faites" if ev.n_tasks else "") + "\nDouble-clic : ouvrir")
+                else:
+                    self.setCursor(Qt.ArrowCursor); self.setToolTip("")
             return
         b, mode, off, _ = self._drag
         slot = self._pos_to_slot(pos.x(), pos.y() - (off if mode == "move" else 0))
@@ -306,13 +350,14 @@ class PlanningPage(Page):
         self.b_day.clicked.connect(lambda: self.set_mode("day")); self.b_week.clicked.connect(lambda: self.set_mode("week"))
         new = QPushButton("＋ Planifier une tâche"); new.setObjectName("primary"); new.clicked.connect(self._new)
         rep = QPushButton("↻ Tâche répétitive…"); rep.clicked.connect(self._new_recurrence)
+        ev_btn = QPushButton("🗓 Événement…"); ev_btn.clicked.connect(self._new_event)
         rep_manage = QPushButton("Gérer les répétitions"); rep_manage.clicked.connect(self._manage_recurrences)
         for w in (prev, today, nxt):
             bar.addWidget(w)
         bar.addWidget(self.range_label); bar.addStretch(); bar.addWidget(self.b_day); bar.addWidget(self.b_week)
         main.addLayout(bar)
         bar2 = QHBoxLayout()
-        bar2.addWidget(new); bar2.addWidget(rep); bar2.addWidget(rep_manage); bar2.addStretch()
+        bar2.addWidget(new); bar2.addWidget(ev_btn); bar2.addWidget(rep); bar2.addWidget(rep_manage); bar2.addStretch()
         main.addLayout(bar2)
         self.header = DayHeader()
         self.grid = TimeGrid()
@@ -325,6 +370,7 @@ class PlanningPage(Page):
         main.addWidget(self.scroll, 1)
         root.addLayout(main, 1)
         self.grid.open_task.connect(lambda i: TaskDialog(self.ctx, i, None, self).exec())
+        self.grid.open_event.connect(self._open_event)
         self.grid.create_at.connect(self._create_at)
         self.grid.schedule_changed.connect(self._reschedule)
 
@@ -337,6 +383,9 @@ class PlanningPage(Page):
         side.addWidget(self.cal)
         self.alerts_card = Card("À surveiller"); self.watch = QLabel(); self.watch.setWordWrap(True)
         self.alerts_card.lay.addWidget(self.watch); side.addWidget(self.alerts_card)
+        evc = Card("Événements de la période"); self.ev_list = QListWidget(); self.ev_list.setMaximumHeight(130)
+        self.ev_list.itemDoubleClicked.connect(lambda it: self._open_event(it.data(Qt.UserRole)))
+        evc.lay.addWidget(self.ev_list); side.addWidget(evc)
         free = Card("Créneaux libres (jour sélectionné)"); self.free_list = QListWidget(); self.free_list.setMaximumHeight(110)
         free.lay.addWidget(self.free_list); side.addWidget(free)
         uns = Card("Tâches sans horaire"); self.uns_list = QListWidget()
@@ -373,18 +422,21 @@ class PlanningPage(Page):
         h0 = max(0, int(s.get("work_start_hour")) - 1)
         h1 = min(24, int(s.get("work_end_hour")) + 1)
         blocks = {d: planning.blocks_for_day(tasks, d) for d in days}
+        events = self.ctx.events.list(frm=days[0], to=days[-1])
+        eblocks = {d: planning.event_blocks_for_day(events, d) for d in days}
         # élargit la plage si une tâche sort des heures de travail
-        for bl in blocks.values():
+        for bl in (*blocks.values(), *eblocks.values()):
             for b in bl:
                 h0 = min(h0, b.start.hour)
                 h1 = max(h1, min(24, b.end.hour + (1 if b.end.minute else 0)))
-        free = {d: planning.free_slots(blocks[d], d, int(s.get("work_start_hour")), int(s.get("work_end_hour")),
+        free = {d: planning.free_slots(blocks[d] + eblocks[d], d, int(s.get("work_start_hour")), int(s.get("work_end_hour")),
                                        int(s.get("min_free_slot_minutes"))) for d in days}
-        loads = {d: planning.busy_minutes(blocks[d]) for d in days}
-        self.grid.set_data(days, blocks, free, h0, h1, now)
+        loads = {d: planning.busy_minutes(blocks[d] + eblocks[d]) for d in days}
+        self.grid.set_data(days, blocks, free, h0, h1, now, eblocks)
         self.header.set_data(days, loads, now.date())
         self.range_label.setText(f"{days[0]:%d/%m/%Y}" if len(days) == 1 else f"{days[0]:%d/%m} – {days[-1]:%d/%m/%Y}")
         self.cal.marked = {t.start_date or t.deadline for t in tasks if t.is_active and (t.start_date or t.deadline)}
+        self.cal.marked |= {e.date for e in self.ctx.events.list(frm=days[0] - timedelta(days=45), to=days[-1] + timedelta(days=45))}
         self.cal.setSelectedDate(QDate(self.anchor.year, self.anchor.month, self.anchor.day))
         self.cal.updateCells()
 
@@ -394,6 +446,14 @@ class PlanningPage(Page):
         if not self.free_list.count():
             self.free_list.addItem("Aucun créneau libre")
 
+        self.ev_list.clear()
+        for e in events:
+            when = f"{DAYS_FR[e.date.weekday()]} {e.date:%d/%m}" + (f" {e.start_time:%H:%M}" if e.start_time else "")
+            it = QListWidgetItem(f"🗓 {when} · {e.title}" + (f"  ✓ {e.n_done}/{e.n_tasks}" if e.n_tasks else ""))
+            it.setData(Qt.UserRole, e.id)
+            self.ev_list.addItem(it)
+        if not self.ev_list.count():
+            self.ev_list.addItem("Aucun événement")
         self.uns_list.clear()
         for d in days:
             for t in planning.unscheduled(tasks, d):
@@ -420,7 +480,14 @@ class PlanningPage(Page):
         TaskDialog(self.ctx, None, {"start_date": self.anchor, "start_time": time(9, 0), "end_time": time(10, 0)}, self).exec()
 
     def _new_recurrence(self) -> None:
-        RecurrenceDialog(self.ctx, None, {"start_date": self.anchor}, self).exec()
+        RecurrenceDialog(self.ctx, None, {"start_date": self.anchor}, "task", self).exec()
+
+    def _new_event(self) -> None:
+        RecurrenceDialog(self.ctx, None, {"start_date": self.anchor, "start_time": time(9, 0), "end_time": time(10, 0)}, "event", self).exec()
+
+    def _open_event(self, event_id) -> None:
+        if event_id:
+            EventDialog(self.ctx, event_id, None, self).exec()
 
     def _manage_recurrences(self) -> None:
         RecurrenceManager(self.ctx, self).exec()

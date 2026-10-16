@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Optional
 
 # Natures de statut : les règles métier se basent sur la nature, jamais sur le libellé
@@ -110,6 +110,41 @@ class Attachment:
 
 
 @dataclass
+class Event:
+    """Rendez-vous daté (culte, réunion…). N'est PAS une tâche : exclu des compteurs et des retards."""
+    id: int
+    space_id: int
+    series_id: Optional[int]
+    title: str
+    description: str
+    location: str
+    date: date
+    start_time: Optional[time]
+    end_time: Optional[time]
+    n_tasks: int = 0
+    n_done: int = 0
+    deleted_at: Optional[datetime] = None
+
+    @property
+    def interval(self):
+        """(début, fin) si l'événement a des horaires ; sans heure de fin : 1 h."""
+        if self.start_time is None:
+            return None
+        start = datetime.combine(self.date, self.start_time)
+        end = datetime.combine(self.date, self.end_time) if self.end_time and self.end_time > self.start_time else start + timedelta(hours=1)
+        return start, end
+
+
+@dataclass
+class EventTemplate:
+    """Tâche modèle d'une série d'événements (ex. « Chanter ») : recréée pour chaque occurrence."""
+    title: str
+    assignee: str = ""
+    days_before: int = 0
+    id: Optional[int] = None
+
+
+@dataclass
 class Recurrence:
     id: int
     space_id: int
@@ -131,6 +166,8 @@ class Recurrence:
     count: Optional[int]
     auto_close: bool
     active: bool
+    kind: str = "task"  # task | event
+    location: str = ""
 
 
 @dataclass
@@ -173,6 +210,8 @@ class Task:
     space_id: int = 1
     n_attach: int = 0
     series_id: Optional[int] = None
+    event_id: Optional[int] = None
+    event_title: str = ""
 
     @property
     def is_closed(self) -> bool:
@@ -217,6 +256,8 @@ class Task:
             space_id=r["space_id"],
             n_attach=r["n_attach"],
             series_id=r["series_id"],
+            event_id=r["event_id"],
+            event_title=r["event_title"] or "",
         )
 
 
@@ -284,6 +325,8 @@ class TaskInput:
     space_id: Optional[int] = None  # None = espace courant
     series_id: Optional[int] = None  # série de répétition
     occurrence_date: Optional[date] = None
+    event_id: Optional[int] = None  # événement auquel la tâche est rattachée
+    template_id: Optional[int] = None
 
 
 class ValidationError(ValueError):

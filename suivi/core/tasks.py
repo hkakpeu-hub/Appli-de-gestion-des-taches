@@ -31,8 +31,10 @@ from .statuses import StatusService
 BASE_SELECT = """
 SELECT t.*, p.name AS project_name, p.color AS project_color,
        s.label AS status_label, s.kind AS status_kind, s.color AS status_color,
-       (SELECT COUNT(*) FROM attachments a WHERE a.task_id = t.id) AS n_attach
+       (SELECT COUNT(*) FROM attachments a WHERE a.task_id = t.id) AS n_attach,
+       ev.title AS event_title
 FROM tasks t
+LEFT JOIN events ev ON ev.id = t.event_id
 LEFT JOIN projects p ON p.id = t.project_id
 JOIN statuses s ON s.id = t.status_id
 """
@@ -63,6 +65,7 @@ FIELD_LABELS = {
     "est_minutes": "Durée estimée (min)",
     "actual_minutes": "Durée réelle (min)",
     "completed_at": "Réalisée le",
+    "event": "Événement",
 }
 
 EVENT_LABELS = {
@@ -102,6 +105,7 @@ class TaskFilter:
     descending: bool = False
     space_id: object = CURRENT  # None = tous les espaces
     include_archived: bool = False  # tâches des projets archivés : masquées par défaut
+    event_id: Optional[int] = None  # tâches rattachées à cet événement
 
     def is_empty(self) -> bool:
         return self == TaskFilter()
@@ -208,6 +212,9 @@ class TaskService:
         if flt.priorities:
             where.append(f"t.priority IN ({','.join('?' * len(flt.priorities))})")
             params += flt.priorities
+        if flt.event_id:
+            where.append("t.event_id=?")
+            params.append(flt.event_id)
         if flt.only_active:
             where.append(active)
         if flt.no_deadline:
@@ -306,14 +313,14 @@ class TaskService:
             cur = c.execute(
                 """INSERT INTO tasks(title,project_id,description,assignee,created_at,start_date,deadline,status_id,
                    priority,completed_at,start_time,end_time,est_minutes,actual_minutes,extra_date,source,
-                   updated_at,status_changed_at,space_id,series_id,occurrence_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   updated_at,status_changed_at,space_id,series_id,occurrence_date,event_id,template_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     data.title.strip(), project.id if project else None, (data.description or "").strip(),
                     (data.assignee or "").strip(), iso_datetime(created), iso_date(data.start_date),
                     iso_date(data.deadline), status_id, data.priority, iso_datetime(completed),
                     iso_time(data.start_time), iso_time(data.end_time), data.est_minutes, data.actual_minutes,
                     iso_date(data.extra_date), data.source, iso_datetime(now), iso_datetime(now), space_id,
-                    data.series_id, iso_date(data.occurrence_date),
+                    data.series_id, iso_date(data.occurrence_date), data.event_id, data.template_id,
                 ),
             )
             task_id = cur.lastrowid
@@ -409,6 +416,11 @@ class TaskService:
                 events.append((name, name, self._fmt(name, oldv), self._fmt(name, newv)))
             else:
                 events.append(("updated", name, self._fmt(name, oldv)[:200], self._fmt(name, newv)[:200]))
+        if (data.event_id or None) != (old.event_id or None):
+            def _etitle(i):
+                r = self.db.conn.execute("SELECT title FROM events WHERE id=?", (i,)).fetchone() if i else None
+                return r["title"] if r else ""
+            events.append(("updated", "event", _etitle(old.event_id), _etitle(data.event_id)))
         if not events and completed == old.completed_at:
             return old  # rien n'a changé : aucun bruit dans l'historique
 
@@ -416,14 +428,14 @@ class TaskService:
             c.execute(
                 """UPDATE tasks SET title=?,project_id=?,description=?,assignee=?,start_date=?,deadline=?,status_id=?,
                    priority=?,completed_at=?,start_time=?,end_time=?,est_minutes=?,actual_minutes=?,extra_date=?,
-                   updated_at=?, status_changed_at=? WHERE id=?""",
+                   updated_at=?, status_changed_at=?, event_id=? WHERE id=?""",
                 (
                     after["title"], project.id if project else None, after["description"], after["assignee"],
                     iso_date(data.start_date), iso_date(data.deadline), new_status.id, data.priority,
                     iso_datetime(completed), iso_time(data.start_time), iso_time(data.end_time),
                     data.est_minutes, data.actual_minutes,
                     iso_date(data.extra_date) if data.extra_date is not None else iso_date(old.extra_date),
-                    iso_datetime(now), iso_datetime(now if status_changed else old.status_changed_at), task_id,
+                    iso_datetime(now), iso_datetime(now if status_changed else old.status_changed_at), data.event_id, task_id,
                 ),
             )
             for ev, name, o, n in events:
@@ -453,7 +465,7 @@ class TaskService:
             title=t.title, project_name=t.project_name, description=t.description, assignee=t.assignee,
             start_date=t.start_date, deadline=t.deadline, status_id=t.status_id, priority=t.priority,
             start_time=t.start_time, end_time=t.end_time, est_minutes=t.est_minutes,
-            actual_minutes=t.actual_minutes, extra_date=t.extra_date, source=t.source,
+            actual_minutes=t.actual_minutes, extra_date=t.extra_date, source=t.source, event_id=t.event_id,
         )
         return replace(data, **over)
 

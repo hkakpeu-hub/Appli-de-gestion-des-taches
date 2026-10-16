@@ -53,14 +53,24 @@ espaces (le compteur de l'accueil les additionne, et la notification Windows ind
 - **Planning** : semaine ou jour ; glisser un bloc pour le déplacer, tirer son bord bas pour changer la durée,
   double-clic sur un créneau vide pour créer. Chevauchements encadrés en rouge, créneaux libres en vert,
   tâches sans horaire listées à droite.
-- **Tâches répétitives** (Planning → *↻ Tâche répétitive…*) : par exemple « Culte, tous les dimanches de 7 h à 11 h ».
-  Fréquence quotidienne, hebdomadaire (jours au choix, toutes les N semaines) ou mensuelle (jour du mois), avec fin
-  facultative (date ou nombre d'occurrences). Chaque occurrence est une vraie tâche (↻ dans les listes) générée à
-  l'avance sur 90 jours : elle apparaît dans le planning, le tableau de bord et les alertes, et peut être terminée,
-  déplacée ou supprimée seule (une occurrence supprimée n'est jamais recréée). L'option « Événement » clôture
-  automatiquement les occurrences passées pour éviter de faux retards. *Gérer les répétitions* : modifier la règle
-  (les occurrences futures intactes sont régénérées, celles commentées ou avec pièce jointe sont conservées),
-  arrêter ou supprimer une série. Aucune occurrence n'est créée dans le passé.
+- **Tâches répétitives** (Planning → *↻ Tâche répétitive…*) : fréquence quotidienne, hebdomadaire (jours au choix, toutes
+  les N semaines) ou mensuelle, avec fin facultative (date ou nombre d'occurrences). Chaque occurrence est une vraie tâche
+  (↻ dans les listes) générée 90 jours à l'avance ; elle peut être terminée, déplacée ou supprimée seule (une occurrence
+  supprimée n'est jamais recréée). Aucune occurrence n'est créée dans le passé.
+- **Événements** (Planning → *🗓 Événement…*) : un culte, une réunion, un baptême… **Un événement n'est pas une tâche** : il
+  n'entre dans aucun compteur, taux d'avancement, retard ni graphique. Il apparaît dans le planning (bloc violet en fond),
+  dans la section **« 🗓 Événements à venir »** du tableau de bord et dans la liste « Événements de la période ».
+  Unique ou récurrent (« Culte, tous les dimanches de 7 h à 11 h »).
+- **Tâches rattachées à un événement** : « Chanter », « Danser », « Prier », « Lecture biblique »… Trois façons de les lier :
+  1. *tâches modèles* d'un événement récurrent : elles sont recréées et rattachées à chaque occurrence, avec une échéance
+     « N jours avant » (créées pour les 3 prochaines semaines seulement, pour éviter des dizaines de tâches futures) ;
+  2. depuis la fiche de l'événement (double-clic) : ajout rapide `Accueil @Paul`, ou « Rattacher une tâche existante… » ;
+  3. depuis la fenêtre d'une tâche : champ « Événement lié » (la tâche sans date prend celle de l'événement).
+  La fiche de l'événement affiche l'avancement (« 3 / 4 faites ») et permet de cocher les tâches ; un 🗓 marque les tâches liées.
+  Ces tâches restent de vraies tâches (comptées, alertées). Supprimer un événement détache ses tâches (ou les supprime, au choix) ;
+  supprimer une occurrence de série ne touche pas aux autres.
+- *Gérer les répétitions* : liste des séries (tâches et événements) ; modifier la règle adapte les occurrences futures intactes
+  (celles dont une tâche a été faite ou commentée sont conservées), arrêter ou supprimer une série.
 - Le **mini-calendrier** du planning entoure la date du jour d'un cercle rouge et marque d'un point les jours chargés.
 - **Alertes** : centre de notifications (compteur dans le menu), marquer lu, reporter (1 h, 3 h, demain, 3 j),
   ouvrir la tâche. Notifications natives Windows ; en fermant la fenêtre, l'application reste dans la zone de

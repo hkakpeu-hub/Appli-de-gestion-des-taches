@@ -177,6 +177,46 @@ MIGRATIONS: list[str] = [
     ALTER TABLE tasks ADD COLUMN occurrence_date TEXT;
     CREATE UNIQUE INDEX ux_tasks_occurrence ON tasks(series_id, occurrence_date) WHERE series_id IS NOT NULL;
     """,
+    # --- version 4 : événements (distincts des tâches) et tâches liées -----------------------------
+    """
+    CREATE TABLE events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        space_id INTEGER NOT NULL DEFAULT 1 REFERENCES spaces(id),
+        series_id INTEGER REFERENCES recurrences(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        location TEXT,
+        date TEXT NOT NULL,
+        start_time TEXT,
+        end_time TEXT,
+        deleted_at TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX ux_events_occurrence ON events(series_id, date) WHERE series_id IS NOT NULL;
+    CREATE INDEX ix_events_date ON events(date);
+    CREATE TABLE event_templates(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        series_id INTEGER NOT NULL REFERENCES recurrences(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        assignee TEXT,
+        days_before INTEGER NOT NULL DEFAULT 0,
+        position INTEGER NOT NULL DEFAULT 0
+    );
+    ALTER TABLE recurrences ADD COLUMN kind TEXT NOT NULL DEFAULT 'task';
+    ALTER TABLE recurrences ADD COLUMN location TEXT;
+    ALTER TABLE tasks ADD COLUMN event_id INTEGER REFERENCES events(id) ON DELETE SET NULL;
+    ALTER TABLE tasks ADD COLUMN template_id INTEGER;
+    CREATE INDEX ix_tasks_event ON tasks(event_id);
+    CREATE UNIQUE INDEX ux_tasks_event_template ON tasks(event_id, template_id)
+        WHERE event_id IS NOT NULL AND template_id IS NOT NULL;
+    -- les séries marquées « événement » (ancienne case à cocher) deviennent de vrais événements
+    UPDATE recurrences SET kind='event' WHERE auto_close=1;
+    INSERT INTO events(space_id,series_id,title,description,date,start_time,end_time,created_at)
+        SELECT r.space_id, r.id, r.title, r.description, t.occurrence_date, r.start_time, r.end_time, r.created_at
+        FROM tasks t JOIN recurrences r ON r.id=t.series_id
+        WHERE r.kind='event' AND t.occurrence_date IS NOT NULL GROUP BY r.id, t.occurrence_date;
+    DELETE FROM tasks WHERE series_id IN (SELECT id FROM recurrences WHERE kind='event');
+    """,
 ]
 
 

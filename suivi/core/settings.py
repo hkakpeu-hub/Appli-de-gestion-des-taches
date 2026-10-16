@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "waiting_days": 5,
     "stale_days": 14,
     "upcoming_days": 7,
+    "events_days": 14,
     "overdue_reemit_days": 1,
     "notstarted_reemit_days": 3,
     "stuck_reemit_days": 3,

@@ -2,6 +2,8 @@ import os
 from datetime import date, time, timedelta
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
@@ -211,10 +213,89 @@ def test_recurrence_dialog_creates_weekly_sunday_event(window, qapp, ctx):
     sundays = [x for x in ctx.tasks.all() if x.series_id]
     assert sundays and all(x.start_date.weekday() == 6 and x.end_time == t(11, 0) for x in sundays)
     mgr = RecurrenceManager(ctx)
-    assert mgr.table.rowCount() == 1 and "dimanche" in mgr.table.item(0, 1).text()
+    assert mgr.table.rowCount() == 1 and "dimanche" in mgr.table.item(0, 2).text()
     window.go("planning")
     plan = window.pages["planning"]
     plan.set_anchor(date(2026, 10, 18))
     qapp.processEvents()
     blocks = plan.grid.blocks[date(2026, 10, 18)]
     assert [b.task.title for b in blocks] == ["Culte"] and blocks[0].minutes == 240  # dimanche 7 h – 11 h dans le planning
+
+def _culte_event_series(ctx):
+    from datetime import time as t
+    from suivi.core.models import EventTemplate
+    from suivi.core.recurrence import RecurrenceInput
+    return ctx.recurrences.create(RecurrenceInput(
+        title="Culte", kind="event", freq="weekly", weekdays=[6], start_date=date(2026, 10, 18), start_time=t(7), end_time=t(11),
+        templates=[EventTemplate("Chanter"), EventTemplate("Danser"), EventTemplate("Prier"), EventTemplate("Lecture biblique")]))
+
+
+def test_events_dashboard_section_does_not_change_task_kpis(window, qapp, ctx):
+    window.go("dashboard")
+    dash = window.pages["dashboard"]
+    dash.refresh()
+    before = {k: dash.kpis[k].value.text() for k in dash.kpis}
+    _culte_event_series(ctx)
+    qapp.processEvents()
+    dash.refresh()
+    after = {k: dash.kpis[k].value.text() for k in dash.kpis}
+    # seules les 4 tâches modèles de chaque culte (échéance = date du culte) peuvent changer les compteurs, jamais l'événement lui-même
+    assert int(after["total"]) - int(before["total"]) == len([x for x in ctx.tasks.all() if x.event_id])
+    assert dash.ev_list.count() >= 1 and "Culte" in dash.ev_list.item(0).text() and "0/4" in dash.ev_list.item(0).text()
+    assert "Événements à venir" in dash.ev_card.title_label.text()
+
+
+def test_event_dialog_links_tasks_and_progress(window, qapp, ctx, make):
+    from suivi.ui.event_dialog import EventDialog
+    _culte_event_series(ctx)
+    ev = ctx.events.list()[0]
+    dlg = EventDialog(ctx, ev.id)
+    assert dlg.table.rowCount() == 4 and dlg.progress_label.text() == "0 / 4 faite(s)"
+    dlg.table.item(0, 0).setCheckState(Qt.Checked)  # coche « Chanter » (ou la 1re ligne)
+    assert dlg.progress_label.text() == "1 / 4 faite(s)" and ctx.events.get(ev.id).n_done == 1
+    dlg.quick.setText("Accueil @Paul")
+    dlg._quick_add()
+    assert dlg.table.rowCount() == 5 and any(t.assignee == "Paul" for t in ctx.events.linked_tasks(ev.id))
+    extra = make("Imprimer les chants")
+    ctx.events.link(extra.id, ev.id)
+    dlg._refresh_tasks()
+    assert dlg.table.rowCount() == 6
+    dlg.table.setCurrentCell(5, 1)
+    dlg._detach()
+    assert dlg.table.rowCount() == 5
+
+
+def test_task_dialog_event_combo_and_marker(window, qapp, ctx):
+    from suivi.ui.task_dialog import TaskDialog
+    _culte_event_series(ctx)
+    ev = ctx.events.list()[0]
+    dlg = TaskDialog(ctx, None)
+    dlg.title.setText("Préparer les chants")
+    dlg.event_combo.setCurrentIndex(dlg.event_combo.findData(ev.id))
+    assert dlg.deadline.value() == ev.date  # date reprise de l'événement
+    dlg._save()
+    t = [x for x in ctx.tasks.all() if x.title == "Préparer les chants"][0]
+    assert t.event_id == ev.id and t.event_title == "Culte"
+    window.go("tasks")
+    page = window.pages["tasks"]
+    page.reload()
+    row = [x.title for x in page.table.model_.tasks].index("Préparer les chants")
+    assert "🗓" in page.table.model_.data(page.table.model_.index(row, 1))
+
+
+def test_event_dialog_creates_one_off_with_tasks_and_planning_shows_event(window, qapp, ctx):
+    from datetime import time as t
+    from suivi.ui.recurrence_dialog import RecurrenceDialog
+    dlg = RecurrenceDialog(ctx, None, {"start_date": date(2026, 10, 18), "start_time": t(7), "end_time": t(11)}, "event")
+    assert dlg.freq.currentData() == "once"
+    dlg.title.setText("Baptême")
+    dlg._tpl_add("Préparer le bassin", "Paul", 1)
+    dlg._save()
+    assert ctx.recurrences.list() == [] and [e.title for e in ctx.events.list()] == ["Baptême"]  # événement unique : pas de série
+    assert [x.title for x in ctx.tasks.all() if x.event_id] == ["Préparer le bassin"]
+    window.go("planning")
+    plan = window.pages["planning"]
+    plan.set_anchor(date(2026, 10, 18))
+    qapp.processEvents()
+    assert [b.event.title for b in plan.grid.eblocks[date(2026, 10, 18)]] == ["Baptême"]
+    assert plan.ev_list.item(0).text().startswith("🗓")

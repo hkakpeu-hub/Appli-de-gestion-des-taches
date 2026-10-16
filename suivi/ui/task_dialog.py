@@ -1,7 +1,7 @@
 """Fenêtre de création / modification d'une tâche (détails, planification, commentaires, historique)."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from pathlib import Path
@@ -94,6 +94,8 @@ class TaskDialog(QDialog):
         self.title.setPlaceholderText("Que faut-il faire ?")
         self.project = QComboBox(); self.project.setEditable(True)
         self.project.lineEdit().setPlaceholderText("Aucun projet")
+        self.event_combo = QComboBox()
+        self.event_combo.setToolTip("Rattache la tâche à un événement (culte, réunion…). La tâche reste une tâche.")
         self.description = QPlainTextEdit(); self.description.setFixedHeight(90)
         self.assignee = QComboBox(); self.assignee.setEditable(True)
         self.status = QComboBox()
@@ -106,6 +108,7 @@ class TaskDialog(QDialog):
         self.actual = QSpinBox(); self.actual.setRange(0, 100000); self.actual.setSpecialValueText("—"); self.actual.setSuffix(" min")
         form.addRow("Intitulé *", self.title)
         form.addRow("Projet", self.project)
+        form.addRow("Événement lié", self.event_combo)
         form.addRow("Description", self.description)
         form.addRow("Responsable", self.assignee)
         row = QHBoxLayout(); row.addWidget(self.status, 1); row.addWidget(self.priority, 1)
@@ -123,11 +126,37 @@ class TaskDialog(QDialog):
         self.project.setCurrentIndex(-1)
         self.assignee.addItems(self.ctx.tasks.assignees())
         self.assignee.setCurrentIndex(-1)
+        self._fill_events()
+        self.event_combo.currentIndexChanged.connect(self._event_chosen)
         for s in self.ctx.statuses.list():
             self.status.addItem(s.label, s.id)
         for p in PRIORITIES:
             self.priority.addItem(PRIORITY_LABELS[p], p)
         self.priority.setCurrentIndex(PRIORITIES.index("normal"))
+
+    def _fill_events(self) -> None:
+        today = self.ctx.clock().date()
+        self.event_combo.addItem("Aucun", None)
+        shown = set()
+        for e in self.ctx.events.list(frm=today - timedelta(days=14), to=today + timedelta(days=150)):
+            when = f"{e.date:%d/%m/%Y}" + (f" {e.start_time:%H:%M}" if e.start_time else "")
+            self.event_combo.addItem(f"🗓 {e.title} — {when}", e.id)
+            shown.add(e.id)
+        cur = self.task.event_id if self.task else None
+        if cur and cur not in shown:  # événement lié hors de la plage affichée
+            try:
+                e = self.ctx.events.get(cur)
+                self.event_combo.addItem(f"🗓 {e.title} — {e.date:%d/%m/%Y}", cur)
+            except Exception:
+                pass
+
+    def _event_chosen(self) -> None:
+        """Une tâche sans date rattachée à un événement prend la date de cet événement."""
+        eid = self.event_combo.currentData()
+        if eid and not self.deadline.value() and not self.start_date.value() and not getattr(self, "_loading_form", False):
+            e = self.ctx.events.get(eid)
+            self.start_date.set_value(e.date)
+            self.deadline.set_value(e.date)
 
     @staticmethod
     def _h(*widgets) -> QWidget:
@@ -138,7 +167,9 @@ class TaskDialog(QDialog):
 
     def _load(self, defaults: dict) -> None:
         t = self.task
+        self._loading_form = True
         if t:
+            self.event_combo.setCurrentIndex(max(0, self.event_combo.findData(t.event_id)))
             self.title.setText(t.title)
             self.project.setCurrentText(t.project_name)
             self.description.setPlainText(t.description)
@@ -161,6 +192,7 @@ class TaskDialog(QDialog):
             self.start_time.set_value(defaults.get("start_time"))
             self.end_time.set_value(defaults.get("end_time"))
             self.title.setFocus()
+        self._loading_form = False
 
     def _collect(self) -> TaskInput:
         done_day = self.completed.value()
@@ -175,7 +207,7 @@ class TaskDialog(QDialog):
             start_time=self.start_time.value(), end_time=self.end_time.value(),
             est_minutes=self.est.value() or None, actual_minutes=self.actual.value() or None,
             completed_at=done_at,
-            extra_date=self.task.extra_date if self.task else None,
+            extra_date=self.task.extra_date if self.task else None, event_id=self.event_combo.currentData(),
             source="Saisie manuelle" if not self.task else self.task.source,
         )
 

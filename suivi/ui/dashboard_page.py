@@ -1,6 +1,8 @@
 """Tableau de bord : indicateurs, listes à traiter, graphiques. Se met à jour à chaque changement de données."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem, QProgressBar, QPushButton,
@@ -12,7 +14,11 @@ from ..core.models import Task
 from . import theme
 from .charts import ColumnChart, DonutChart, HBarChart, LineChart
 from .common import Card, Page, due_text, fmt_date
+from .event_dialog import EventDialog
 from .task_dialog import TaskDialog
+
+
+DAYS3 = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
 
 
 class Kpi(QFrame):
@@ -94,6 +100,17 @@ class DashboardPage(Page):
         prog.lay.addWidget(self.bar)
         root.addWidget(prog)
 
+        # --- événements (à part : jamais comptés comme tâches)
+        self.ev_card = Card("🗓 Événements à venir")
+        self.ev_note = QLabel("Les événements ne sont pas des tâches : ils n'entrent pas dans les compteurs, retards ni graphiques. "
+                              "Les tâches qui leur sont rattachées, elles, sont comptées normalement.")
+        self.ev_note.setObjectName("muted"); self.ev_note.setWordWrap(True)
+        self.ev_card.lay.addWidget(self.ev_note)
+        self.ev_list = QListWidget(); self.ev_list.setMinimumHeight(110); self.ev_list.setMaximumHeight(210)
+        self.ev_list.itemDoubleClicked.connect(lambda it: self._open_event(it.data(Qt.UserRole)))
+        self.ev_card.lay.addWidget(self.ev_list)
+        root.addWidget(self.ev_card)
+
         # --- listes à traiter
         lists = Card("À traiter")
         self.tabs = QTabWidget()
@@ -150,6 +167,10 @@ class DashboardPage(Page):
         root.addWidget(rank)
 
     # ---------------------------------------------------------------------------
+    def _open_event(self, event_id) -> None:
+        if event_id:
+            EventDialog(self.ctx, event_id, None, self).exec()
+
     def _project_clicked(self, name: str) -> None:
         p = self.ctx.projects.by_name(name)
         if p:
@@ -171,6 +192,21 @@ class DashboardPage(Page):
         self.prog_label.setText(f"{d.progress:.0%}   ({d.done} terminées sur {d.total - d.cancelled} tâches hors annulées)")
 
         today = now.date()
+        events = self.ctx.events.list(frm=today, to=today + timedelta(days=int(settings["events_days"])))
+        self.ev_list.clear()
+        for e in events:
+            left = (e.date - today).days
+            when = "Aujourd'hui" if left == 0 else ("Demain" if left == 1 else f"{DAYS3[e.date.weekday()]} {e.date:%d/%m}")
+            hours = f" · {e.start_time:%H:%M}" + (f"–{e.end_time:%H:%M}" if e.end_time else "") if e.start_time else ""
+            prog = f"   —   ✓ {e.n_done}/{e.n_tasks} tâche(s)" if e.n_tasks else ""
+            it = QListWidgetItem(f"{when}{hours}  ·  {e.title}{prog}" + (f"  ·  {e.location}" if e.location else ""))
+            it.setData(Qt.UserRole, e.id)
+            if left == 0:
+                f = it.font(); f.setBold(True); it.setFont(f)
+            self.ev_list.addItem(it)
+        if not events:
+            self.ev_list.addItem(QListWidgetItem("Aucun événement dans la période. Ajoutez-en depuis Calendrier et planning → 🗓 Événement."))
+        self.ev_card.title_label.setText(f"🗓 Événements à venir ({len(events)})")
         data = {
             "overdue": d.overdue_tasks, "today": d.today_tasks, "upcoming": d.upcoming_tasks, "blocked": d.blocked_tasks,
             "late_start": d.late_start_tasks, "no_deadline": d.no_deadline_tasks, "stale": d.stale_tasks,
