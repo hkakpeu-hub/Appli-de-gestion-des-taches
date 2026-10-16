@@ -55,7 +55,8 @@ espaces (le compteur de l'accueil les additionne, et la notification Windows ind
   tâches sans horaire listées à droite.
 - **Tâches répétitives** (Planning → *↻ Tâche répétitive…*) : fréquence quotidienne, hebdomadaire (jours au choix, toutes
   les N semaines) ou mensuelle, avec fin facultative (date ou nombre d'occurrences). Chaque occurrence est une vraie tâche
-  (↻ dans les listes) générée 90 jours à l'avance ; elle peut être terminée, déplacée ou supprimée seule (une occurrence
+  (↻ dans les listes) créée **1 semaine avant sa date** par défaut (réglable : « Créer chaque occurrence N semaine(s) avant sa date »,
+  à la création ou plus tard) ; elle peut être terminée, déplacée ou supprimée seule (une occurrence
   supprimée n'est jamais recréée). Aucune occurrence n'est créée dans le passé.
 - **Événements** (Planning → *🗓 Événement…*) : un culte, une réunion, un baptême… **Un événement n'est pas une tâche** : il
   n'entre dans aucun compteur, taux d'avancement, retard ni graphique. Il apparaît dans le planning (bloc violet en fond),

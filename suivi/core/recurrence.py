@@ -2,7 +2,8 @@
 
 Une *série* (table ``recurrences``, ``kind`` = ``task`` ou ``event``) décrit la règle ; les occurrences sont
 générées à l'avance sur un horizon glissant de 90 jours, sans jamais créer d'occurrence dans le passé :
- - série de **tâches** : chaque occurrence est une vraie tâche (``tasks.series_id``) ;
+ - série de **tâches** : chaque occurrence est une vraie tâche (``tasks.series_id``), créée ``task_weeks`` semaine(s)
+   (1 par défaut) avant sa date pour ne pas encombrer les listes ;
  - série d'**événements** : chaque occurrence est un événement (``events.series_id``), jamais compté comme tâche.
    Une série d'événements peut porter des **tâches modèles** (« Chanter », « Danser »…) recréées et rattachées à
    chaque occurrence, avec une échéance « N jours avant ».
@@ -343,10 +344,12 @@ class RecurrenceService:
     def _sync_tasks(self, s: Recurrence, today: date, horizon: date) -> int:
         changed = 0
         project = self.projects.get(s.project_id).name if s.project_id else ""
+        limit = min(horizon, today + timedelta(days=7 * max(1, s.task_weeks)))  # N semaine(s) à l'avance
+        self._prune_far_occurrences(s.id, limit)
         existing = {r["occurrence_date"] for r in self.db.conn.execute(
             "SELECT occurrence_date FROM tasks WHERE series_id=?", (s.id,))}
         with self.tasks.batch():
-            for d in occurrences(s, max(today, s.start_date), horizon):
+            for d in occurrences(s, max(today, s.start_date), limit):
                 if iso_date(d) in existing:
                     continue
                 try:
@@ -360,6 +363,16 @@ class RecurrenceService:
                     break
                 changed += 1
         return changed
+
+    def _prune_far_occurrences(self, series_id: int, limit: date) -> None:
+        """Réduction du délai : retire les occurrences intactes (à faire, sans commentaire ni pièce jointe) au-delà de la limite."""
+        with self.db.transaction() as c:
+            for r in c.execute(
+                    """SELECT t.id FROM tasks t JOIN statuses s ON s.id=t.status_id WHERE t.series_id=? AND t.occurrence_date>?
+                       AND t.deleted_at IS NULL AND s.kind='todo'
+                       AND NOT EXISTS (SELECT 1 FROM comments m WHERE m.task_id=t.id)
+                       AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.task_id=t.id)""", (series_id, iso_date(limit))).fetchall():
+                c.execute("DELETE FROM tasks WHERE id=?", (r["id"],))
 
     def _sync_events(self, s: Recurrence, today: date, horizon: date) -> int:
         changed = 0

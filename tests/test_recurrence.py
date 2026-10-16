@@ -11,7 +11,8 @@ TODAY = date(2026, 10, 13)
 
 
 def culte(**kw):
-    base = dict(title="Culte", freq="weekly", weekdays=[6], start_date=TODAY, start_time=time(7), end_time=time(11))
+    base = dict(title="Culte", freq="weekly", weekdays=[6], start_date=TODAY, start_time=time(7), end_time=time(11),
+                task_weeks=13)  # 13 semaines : horizon complet (les tests dédiés couvrent la valeur par défaut)
     base.update(kw)
     return RecurrenceInput(**base)
 
@@ -123,3 +124,28 @@ def test_archived_project_does_not_break_sync(ctx):
     ctx.set_space(ctx.scope.space_id)
     assert ctx.recurrences.sync() == 0  # aucune erreur, aucune occurrence en double
     assert ctx.tasks.all() == []  # toujours masquées
+
+
+def test_task_series_created_one_week_ahead_by_default(ctx, clock):
+    s = ctx.recurrences.create(culte(task_weeks=1))
+    assert s.task_weeks == 1
+    assert [t.start_date for t in ctx.tasks.all()] == [date(2026, 10, 18)]  # seule l'occurrence de la semaine existe
+    assert ctx.recurrences.sync() == 0
+    clock.now = datetime(2026, 10, 19, 9, 0)  # le lendemain : la suivante (25/10) entre dans la semaine
+    ctx.recurrences.sync()
+    assert sorted(t.start_date for t in ctx.tasks.all()) == [date(2026, 10, 18), date(2026, 10, 25)]
+    assert ctx.recurrences.sync() == 0
+
+
+def test_task_weeks_parameter_and_shrinking_keeps_touched(ctx):
+    s = ctx.recurrences.create(culte(task_weeks=4))
+    dates = sorted(t.start_date for t in ctx.tasks.all())
+    assert dates == [date(2026, 10, 18), date(2026, 10, 25), date(2026, 11, 1), date(2026, 11, 8)]
+    far = [t for t in ctx.tasks.all() if t.start_date == date(2026, 11, 1)][0]
+    ctx.tasks.add_comment(far.id, "Invité spécial")  # occurrence « touchée »
+    ctx.recurrences.update(s.id, culte(task_weeks=1))
+    assert sorted(t.start_date for t in ctx.tasks.all()) == [date(2026, 10, 18), date(2026, 11, 1)]  # 25/10 et 8/11 retirées ; 1/11 gardée
+    deleted = [t for t in ctx.tasks.all() if t.start_date == date(2026, 10, 18)][0]
+    ctx.tasks.delete(deleted.id)
+    ctx.recurrences.sync()
+    assert deleted.id not in [t.id for t in ctx.tasks.all()]  # jamais recréée

@@ -121,14 +121,18 @@ class RecurrenceDialog(QDialog):
         self.tpl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.tpl.setMinimumHeight(150)
         tl.addWidget(self.tpl)
-        wrow = QHBoxLayout()
-        self.task_weeks_label = QLabel("Créer ces tâches")
+        self.tw_widget = QWidget()
+        wrow = QHBoxLayout(self.tw_widget); wrow.setContentsMargins(0, 0, 0, 0)
+        self.task_weeks_label = QLabel("Créer ces tâches" if ev else "Créer chaque occurrence")
         self.task_weeks = QSpinBox(); self.task_weeks.setRange(1, 26); self.task_weeks.setValue(1)
-        self.task_weeks.setSuffix(" semaine(s) avant chaque événement")
-        self.task_weeks.setToolTip("Les tâches d'une occurrence n'apparaissent dans vos listes que ce nombre de semaines avant sa date "
+        self.task_weeks.setSuffix(" semaine(s) avant chaque événement" if ev else " semaine(s) avant sa date")
+        self.task_weeks.setToolTip("Une occurrence n'apparaît dans vos listes que ce nombre de semaines avant sa date "
                                    "(1 par défaut), pour ne pas encombrer les listes avec des tâches lointaines.")
         wrow.addWidget(self.task_weeks_label); wrow.addWidget(self.task_weeks); wrow.addStretch()
-        tl.addLayout(wrow)
+        if ev:
+            tl.addWidget(self.tw_widget)
+        else:
+            root.addWidget(self.tw_widget)
         trow = QHBoxLayout()
         b_add = QPushButton("＋ Ajouter une tâche"); b_add.clicked.connect(lambda: self._tpl_add())
         b_del = QPushButton("Retirer"); b_del.clicked.connect(self._tpl_remove)
@@ -230,7 +234,7 @@ class RecurrenceDialog(QDialog):
         self.days_w.setVisible(f == "weekly")
         self.mday_w.setVisible(f == "monthly")
         self.interval.setVisible(rec); self.end_w.setVisible(rec)
-        self.task_weeks.setVisible(rec); self.task_weeks_label.setVisible(rec)
+        self.tw_widget.setVisible(rec)
         self.start_label.setText("À partir du" if rec else "Date")
         if rec:
             self.interval.setSuffix({"daily": " jour(s)", "weekly": " semaine(s)", "monthly": " mois"}[f])
