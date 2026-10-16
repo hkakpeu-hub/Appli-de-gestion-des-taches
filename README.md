@@ -53,6 +53,15 @@ espaces (le compteur de l'accueil les additionne, et la notification Windows ind
 - **Planning** : semaine ou jour ; glisser un bloc pour le déplacer, tirer son bord bas pour changer la durée,
   double-clic sur un créneau vide pour créer. Chevauchements encadrés en rouge, créneaux libres en vert,
   tâches sans horaire listées à droite.
+- **Tâches répétitives** (Planning → *↻ Tâche répétitive…*) : par exemple « Culte, tous les dimanches de 7 h à 11 h ».
+  Fréquence quotidienne, hebdomadaire (jours au choix, toutes les N semaines) ou mensuelle (jour du mois), avec fin
+  facultative (date ou nombre d'occurrences). Chaque occurrence est une vraie tâche (↻ dans les listes) générée à
+  l'avance sur 90 jours : elle apparaît dans le planning, le tableau de bord et les alertes, et peut être terminée,
+  déplacée ou supprimée seule (une occurrence supprimée n'est jamais recréée). L'option « Événement » clôture
+  automatiquement les occurrences passées pour éviter de faux retards. *Gérer les répétitions* : modifier la règle
+  (les occurrences futures intactes sont régénérées, celles commentées ou avec pièce jointe sont conservées),
+  arrêter ou supprimer une série. Aucune occurrence n'est créée dans le passé.
+- Le **mini-calendrier** du planning entoure la date du jour d'un cercle rouge et marque d'un point les jours chargés.
 - **Alertes** : centre de notifications (compteur dans le menu), marquer lu, reporter (1 h, 3 h, demain, 3 j),
   ouvrir la tâche. Notifications natives Windows ; en fermant la fenêtre, l'application reste dans la zone de
   notification pour continuer à alerter (*Quitter* via clic droit sur l'icône).

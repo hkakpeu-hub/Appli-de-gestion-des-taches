@@ -306,13 +306,14 @@ class TaskService:
             cur = c.execute(
                 """INSERT INTO tasks(title,project_id,description,assignee,created_at,start_date,deadline,status_id,
                    priority,completed_at,start_time,end_time,est_minutes,actual_minutes,extra_date,source,
-                   updated_at,status_changed_at,space_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   updated_at,status_changed_at,space_id,series_id,occurrence_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     data.title.strip(), project.id if project else None, (data.description or "").strip(),
                     (data.assignee or "").strip(), iso_datetime(created), iso_date(data.start_date),
                     iso_date(data.deadline), status_id, data.priority, iso_datetime(completed),
                     iso_time(data.start_time), iso_time(data.end_time), data.est_minutes, data.actual_minutes,
                     iso_date(data.extra_date), data.source, iso_datetime(now), iso_datetime(now), space_id,
+                    data.series_id, iso_date(data.occurrence_date),
                 ),
             )
             task_id = cur.lastrowid

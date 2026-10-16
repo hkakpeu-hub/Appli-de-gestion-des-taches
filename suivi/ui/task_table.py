@@ -61,7 +61,7 @@ class TaskModel(QAbstractTableModel):
             return t
         if role == Qt.DisplayRole:
             return [
-                t.priority_label, ("📎 " if t.n_attach else "") + t.title, t.project_name, t.status_label, t.assignee,
+                t.priority_label, ("↻ " if t.series_id else "") + ("📎 " if t.n_attach else "") + t.title, t.project_name, t.status_label, t.assignee,
                 fmt_date(t.start_date), fmt_date(t.deadline), due_text(t, today), t.updated_at.strftime("%d/%m/%Y"),
             ][c]
         if role == Qt.ToolTipRole and c == 1:

@@ -15,6 +15,7 @@ from .core.attachments import AttachmentService
 from .core.spaces import Scope, SpaceService
 from .core.backup import BackupService
 from .core.projects import ProjectService
+from .core.recurrence import RecurrenceService
 from .core.settings import Settings
 from .core.statuses import StatusService
 from .core.tasks import TaskService
@@ -35,6 +36,7 @@ class AppContext:
         self.projects = ProjectService(self.db, self.scope)
         self.tasks = TaskService(self.db, self.projects, self.statuses, clock, self.scope)
         self.attachments = AttachmentService(self.db, self.settings, self.tasks, clock)
+        self.recurrences = RecurrenceService(self.db, self.tasks, self.projects, self.statuses, self.scope, clock)
         self.alerts = AlertEngine(self.db, self.tasks, self.settings)
         self.backups = BackupService(self.db, self.settings, backup_dir or paths.backups_dir(), clock)
         self.importer = ExcelImporter(self.tasks, backup=lambda: self.backups.create("import"))

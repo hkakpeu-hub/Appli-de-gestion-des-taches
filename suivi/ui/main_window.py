@@ -307,6 +307,13 @@ class MainWindow(QMainWindow):
                     self.tray.showMessage(f"{a.space_name} · {LEVELS[a.level]} · {a.task_title[:60]}", a.message, icon, 12000)
         self.ctx.alerts.mark_notified([a.id for a in fresh])  # jamais renotifiées, même après redémarrage
 
+    def _sync_recurrences(self) -> None:
+        """Génère les occurrences à venir des tâches répétitives (notifie l'interface seulement s'il y a du nouveau)."""
+        try:
+            self.ctx.recurrences.sync()
+        except Exception:
+            log.exception("Génération des tâches répétitives impossible")
+
     def tick(self) -> None:
         """Vérification périodique : changement de jour, alertes, sauvegarde automatique."""
         if self._closed:
@@ -315,6 +322,7 @@ class MainWindow(QMainWindow):
         if now.date() != self._last_day:
             self._last_day = now.date()
             self.refresh_all()
+        self._sync_recurrences()
         self.run_alerts(notify=True)
         if self.stack.currentWidget() in (self.pages["planning"], self.pages["dashboard"]):
             self.stack.currentWidget().refresh()

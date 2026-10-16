@@ -74,6 +74,10 @@ QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QToolTip {{ background: {NAVY}; color: white; border: none; padding: 5px; }}
 QGroupBox {{ border: 1px solid {BORDER}; border-radius: 8px; margin-top: 12px; padding: 12px; background: white; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 12px; padding: 0 4px; font-weight: 600; }}
+QCalendarWidget QWidget#qt_calendar_navigationbar {{ background: #EEF2F8; }}
+QCalendarWidget QToolButton {{ color: {TEXT}; background: transparent; font-weight: 600; border: none; padding: 4px 8px; }}
+QCalendarWidget QToolButton:hover {{ background: #DBE7FF; border-radius: 6px; }}
+QCalendarWidget QAbstractItemView:enabled {{ selection-background-color: #DBE7FF; selection-color: {TEXT}; }}
 QWidget#homeBody, QWidget#home {{ background: #F5F5F7; }}
 QFrame#tile {{ background: white; border: 1px solid #E5E5EA; border-radius: 22px; }}
 QFrame#tile:hover {{ border: 1px solid #0A84FF; background: #FCFDFF; }}

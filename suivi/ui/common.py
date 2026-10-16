@@ -17,6 +17,14 @@ def fmt_date(d: Optional[date]) -> str:
     return d.strftime("%d/%m/%Y") if d else "—"
 
 
+_DAYS3 = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
+
+
+def fmt_day(d: Optional[date]) -> str:
+    """« dim. 18/10/2026 » (jours en français quel que soit le réglage régional de Windows)."""
+    return f"{_DAYS3[d.weekday()]} {d:%d/%m/%Y}" if d else "—"
+
+
 def fmt_dt(d: Optional[datetime]) -> str:
     return d.strftime("%d/%m/%Y %H:%M") if d else "—"
 

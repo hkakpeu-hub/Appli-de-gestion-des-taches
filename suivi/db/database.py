@@ -148,6 +148,35 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX ix_attachments_task ON attachments(task_id);
     """,
+    # --- version 3 : tâches répétitives ---------------------------------------------------------
+    """
+    CREATE TABLE recurrences(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        space_id INTEGER NOT NULL DEFAULT 1 REFERENCES spaces(id),
+        title TEXT NOT NULL,
+        project_id INTEGER REFERENCES projects(id),
+        description TEXT,
+        assignee TEXT,
+        priority TEXT NOT NULL DEFAULT 'normal',
+        start_time TEXT,
+        end_time TEXT,
+        est_minutes INTEGER,
+        freq TEXT NOT NULL,
+        interval INTEGER NOT NULL DEFAULT 1,
+        weekdays TEXT,
+        month_day INTEGER,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        count INTEGER,
+        auto_close INTEGER NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1,
+        generated_until TEXT,
+        created_at TEXT NOT NULL
+    );
+    ALTER TABLE tasks ADD COLUMN series_id INTEGER REFERENCES recurrences(id) ON DELETE SET NULL;
+    ALTER TABLE tasks ADD COLUMN occurrence_date TEXT;
+    CREATE UNIQUE INDEX ux_tasks_occurrence ON tasks(series_id, occurrence_date) WHERE series_id IS NOT NULL;
+    """,
 ]
 
 

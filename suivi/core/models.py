@@ -110,6 +110,30 @@ class Attachment:
 
 
 @dataclass
+class Recurrence:
+    id: int
+    space_id: int
+    title: str
+    project_id: Optional[int]
+    project_name: str
+    description: str
+    assignee: str
+    priority: str
+    start_time: Optional[time]
+    end_time: Optional[time]
+    est_minutes: Optional[int]
+    freq: str
+    interval: int
+    weekdays: list
+    month_day: Optional[int]
+    start_date: Optional[date]
+    end_date: Optional[date]
+    count: Optional[int]
+    auto_close: bool
+    active: bool
+
+
+@dataclass
 class Project:
     id: int
     space_id: int
@@ -148,6 +172,7 @@ class Task:
     project_color: Optional[str] = None
     space_id: int = 1
     n_attach: int = 0
+    series_id: Optional[int] = None
 
     @property
     def is_closed(self) -> bool:
@@ -191,6 +216,7 @@ class Task:
             project_color=r["project_color"],
             space_id=r["space_id"],
             n_attach=r["n_attach"],
+            series_id=r["series_id"],
         )
 
 
@@ -256,6 +282,8 @@ class TaskInput:
     source: str = ""
     comments: list[str] = field(default_factory=list)
     space_id: Optional[int] = None  # None = espace courant
+    series_id: Optional[int] = None  # série de répétition
+    occurrence_date: Optional[date] = None
 
 
 class ValidationError(ValueError):

@@ -15,10 +15,39 @@ from ..core import planning
 from ..core.models import to_date
 from . import theme
 from .common import Card, Page, fmt_date, show_error
+from .recurrence_dialog import RecurrenceDialog, RecurrenceManager
 from .task_dialog import TaskDialog
 
 DAYS_FR = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
 GUTTER, HOUR_H, SNAP = 52, 46, 15
+
+
+class TodayCalendar(QCalendarWidget):
+    """Mini-calendrier : aujourd'hui entouré d'un cercle rouge, jours avec tâches marqués d'un point."""
+
+    TODAY_COLOR = QColor("#E11D48")
+
+    def __init__(self, today_fn):
+        super().__init__()
+        self._today_fn = today_fn
+        self.marked: set[date] = set()
+
+    def paintCell(self, painter, rect, qdate):
+        super().paintCell(painter, rect, qdate)
+        d = qdate.toPython()
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        if d == self._today_fn():
+            size = min(rect.width(), rect.height()) - 4
+            circle = QRectF(rect.center().x() - size / 2, rect.center().y() - size / 2, size, size)
+            painter.setPen(QPen(self.TODAY_COLOR, 2.4))
+            painter.setBrush(QColor(225, 29, 72, 28))
+            painter.drawEllipse(circle)
+        if d in self.marked:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(theme.ACCENT))
+            painter.drawEllipse(QPointF(rect.center().x(), rect.bottom() - 4), 2.2, 2.2)
+        painter.restore()
 
 
 class DayHeader(QWidget):
@@ -155,7 +184,7 @@ class TimeGrid(QWidget):
 
     def _paint_block(self, p: QPainter, b: planning.Block, r: QRectF, fm: QFontMetrics) -> None:
         t = b.task
-        base = QColor(t.project_color or t.status_color)
+        base = QColor(t.project_color or theme.ACCENT)
         closed = t.is_closed
         fill = QColor(base); fill.setAlpha(60 if closed else 215)
         p.setBrush(fill)
@@ -276,10 +305,15 @@ class PlanningPage(Page):
         group = QButtonGroup(self); group.setExclusive(True); group.addButton(self.b_day); group.addButton(self.b_week)
         self.b_day.clicked.connect(lambda: self.set_mode("day")); self.b_week.clicked.connect(lambda: self.set_mode("week"))
         new = QPushButton("＋ Planifier une tâche"); new.setObjectName("primary"); new.clicked.connect(self._new)
+        rep = QPushButton("↻ Tâche répétitive…"); rep.clicked.connect(self._new_recurrence)
+        rep_manage = QPushButton("Gérer les répétitions"); rep_manage.clicked.connect(self._manage_recurrences)
         for w in (prev, today, nxt):
             bar.addWidget(w)
-        bar.addWidget(self.range_label); bar.addStretch(); bar.addWidget(self.b_day); bar.addWidget(self.b_week); bar.addWidget(new)
+        bar.addWidget(self.range_label); bar.addStretch(); bar.addWidget(self.b_day); bar.addWidget(self.b_week)
         main.addLayout(bar)
+        bar2 = QHBoxLayout()
+        bar2.addWidget(new); bar2.addWidget(rep); bar2.addWidget(rep_manage); bar2.addStretch()
+        main.addLayout(bar2)
         self.header = DayHeader()
         self.grid = TimeGrid()
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setWidget(self.grid)
@@ -297,7 +331,7 @@ class PlanningPage(Page):
         # --- panneau latéral
         side = QVBoxLayout()
         side.setSpacing(10)
-        self.cal = QCalendarWidget(); self.cal.setGridVisible(False); self.cal.setFirstDayOfWeek(Qt.Monday)
+        self.cal = TodayCalendar(lambda: self.ctx.clock().date()); self.cal.setGridVisible(False); self.cal.setFirstDayOfWeek(Qt.Monday)
         self.cal.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
         self.cal.clicked.connect(lambda qd: self.set_anchor(qd.toPython()))
         side.addWidget(self.cal)
@@ -350,7 +384,9 @@ class PlanningPage(Page):
         self.grid.set_data(days, blocks, free, h0, h1, now)
         self.header.set_data(days, loads, now.date())
         self.range_label.setText(f"{days[0]:%d/%m/%Y}" if len(days) == 1 else f"{days[0]:%d/%m} – {days[-1]:%d/%m/%Y}")
+        self.cal.marked = {t.start_date or t.deadline for t in tasks if t.is_active and (t.start_date or t.deadline)}
         self.cal.setSelectedDate(QDate(self.anchor.year, self.anchor.month, self.anchor.day))
+        self.cal.updateCells()
 
         self.free_list.clear()
         for a, b in free.get(self.anchor, free[days[0]] if self.mode == "week" and self.anchor not in free else []):
@@ -361,7 +397,7 @@ class PlanningPage(Page):
         self.uns_list.clear()
         for d in days:
             for t in planning.unscheduled(tasks, d):
-                it = QListWidgetItem(f"{d:%a %d/%m} · {t.title}")
+                it = QListWidgetItem(f"{DAYS_FR[d.weekday()]} {d:%d/%m} · {t.title}")
                 it.setData(Qt.UserRole, t.id)
                 self.uns_list.addItem(it)
         if not self.uns_list.count():
@@ -382,6 +418,12 @@ class PlanningPage(Page):
     # ------------------------------------------------------------------ actions
     def _new(self) -> None:
         TaskDialog(self.ctx, None, {"start_date": self.anchor, "start_time": time(9, 0), "end_time": time(10, 0)}, self).exec()
+
+    def _new_recurrence(self) -> None:
+        RecurrenceDialog(self.ctx, None, {"start_date": self.anchor}, self).exec()
+
+    def _manage_recurrences(self) -> None:
+        RecurrenceManager(self.ctx, self).exec()
 
     def _create_at(self, day: date, t: time) -> None:
         end = (datetime.combine(day, t) + timedelta(hours=1)).time()

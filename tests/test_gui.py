@@ -183,3 +183,38 @@ def test_task_dialog_attachments(window, qapp, ctx, tmp_path, monkeypatch):
     new._save()
     created = [x for x in ctx.tasks.all() if x.title == "Avec pièce jointe"][0]
     assert created.n_attach == 1
+
+def test_calendar_marks_today_with_red_circle(window, qapp):
+    window.go("planning")
+    plan = window.pages["planning"]
+    plan.set_anchor(TODAY)
+    qapp.processEvents()
+    img = plan.cal.grab().toImage()
+    reds = sum(1 for x in range(img.width()) for y in range(img.height())
+               if (c := img.pixelColor(x, y)).red() > 200 and c.green() < 80 and 40 < c.blue() < 130)
+    assert reds > 40, "le cercle rouge d'aujourd'hui doit être dessiné"
+    assert plan.cal.TODAY_COLOR.red() > 200
+
+
+def test_recurrence_dialog_creates_weekly_sunday_event(window, qapp, ctx):
+    from datetime import time as t
+    from suivi.ui.recurrence_dialog import RecurrenceDialog, RecurrenceManager
+    dlg = RecurrenceDialog(ctx, None, {"start_date": date(2026, 10, 18)})
+    dlg.title.setText("Culte")
+    dlg.start_time.set_value(t(7, 0))
+    dlg.end_time.set_value(t(11, 0))
+    assert [cb.isChecked() for cb in dlg.day_checks] == [False] * 6 + [True]
+    assert "dimanche" in dlg.summary.text() and "07:00" in dlg.summary.text()
+    dlg._save()
+    series = ctx.recurrences.list()
+    assert len(series) == 1 and series[0].title == "Culte"
+    sundays = [x for x in ctx.tasks.all() if x.series_id]
+    assert sundays and all(x.start_date.weekday() == 6 and x.end_time == t(11, 0) for x in sundays)
+    mgr = RecurrenceManager(ctx)
+    assert mgr.table.rowCount() == 1 and "dimanche" in mgr.table.item(0, 1).text()
+    window.go("planning")
+    plan = window.pages["planning"]
+    plan.set_anchor(date(2026, 10, 18))
+    qapp.processEvents()
+    blocks = plan.grid.blocks[date(2026, 10, 18)]
+    assert [b.task.title for b in blocks] == ["Culte"] and blocks[0].minutes == 240  # dimanche 7 h – 11 h dans le planning
