@@ -121,6 +121,14 @@ class RecurrenceDialog(QDialog):
         self.tpl.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.tpl.setMinimumHeight(150)
         tl.addWidget(self.tpl)
+        wrow = QHBoxLayout()
+        self.task_weeks_label = QLabel("Créer ces tâches")
+        self.task_weeks = QSpinBox(); self.task_weeks.setRange(1, 26); self.task_weeks.setValue(1)
+        self.task_weeks.setSuffix(" semaine(s) avant chaque événement")
+        self.task_weeks.setToolTip("Les tâches d'une occurrence n'apparaissent dans vos listes que ce nombre de semaines avant sa date "
+                                   "(1 par défaut), pour ne pas encombrer les listes avec des tâches lointaines.")
+        wrow.addWidget(self.task_weeks_label); wrow.addWidget(self.task_weeks); wrow.addStretch()
+        tl.addLayout(wrow)
         trow = QHBoxLayout()
         b_add = QPushButton("＋ Ajouter une tâche"); b_add.clicked.connect(lambda: self._tpl_add())
         b_del = QPushButton("Retirer"); b_del.clicked.connect(self._tpl_remove)
@@ -212,6 +220,7 @@ class RecurrenceDialog(QDialog):
         elif s.count:
             self.end_after.setChecked(True); self.end_count.setValue(s.count)
         self.freq.setEnabled(True)
+        self.task_weeks.setValue(s.task_weeks)
         for t in self.ctx.recurrences.templates(s.id):
             self._tpl_add(t.title, t.assignee, t.days_before, t.id)
 
@@ -221,6 +230,7 @@ class RecurrenceDialog(QDialog):
         self.days_w.setVisible(f == "weekly")
         self.mday_w.setVisible(f == "monthly")
         self.interval.setVisible(rec); self.end_w.setVisible(rec)
+        self.task_weeks.setVisible(rec); self.task_weeks_label.setVisible(rec)
         self.start_label.setText("À partir du" if rec else "Date")
         if rec:
             self.interval.setSuffix({"daily": " jour(s)", "weekly": " semaine(s)", "monthly": " mois"}[f])
@@ -237,7 +247,7 @@ class RecurrenceDialog(QDialog):
             start_date=self.start_date.date().toPython(),
             end_date=self.end_date.date().toPython() if self.end_on.isChecked() and f != "once" else None,
             count=self.end_count.value() if self.end_after.isChecked() and f != "once" else None,
-            kind=self.kind, location=self.location.text(), templates=self._templates(),
+            kind=self.kind, location=self.location.text(), templates=self._templates(), task_weeks=self.task_weeks.value(),
         )
 
     def _preview(self, *_) -> None:

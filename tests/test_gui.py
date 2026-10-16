@@ -299,3 +299,17 @@ def test_event_dialog_creates_one_off_with_tasks_and_planning_shows_event(window
     qapp.processEvents()
     assert [b.event.title for b in plan.grid.eblocks[date(2026, 10, 18)]] == ["Baptême"]
     assert plan.ev_list.item(0).text().startswith("🗓")
+
+def test_event_dialog_task_weeks_parameter_defaults_to_one(window, qapp, ctx):
+    from datetime import time as t
+    from suivi.ui.recurrence_dialog import RecurrenceDialog
+    dlg = RecurrenceDialog(ctx, None, {"start_date": date(2026, 10, 18), "start_time": t(7), "end_time": t(11)}, "event")
+    dlg.freq.setCurrentIndex(dlg.freq.findData("weekly"))
+    assert dlg.task_weeks.value() == 1  # une semaine par défaut
+    dlg.title.setText("Culte")
+    dlg._tpl_add("Chanter"); dlg._tpl_add("Prier")
+    dlg.task_weeks.setValue(2)
+    dlg._save()
+    assert ctx.recurrences.list()[0].task_weeks == 2
+    edit = RecurrenceDialog(ctx, ctx.recurrences.list()[0].id)
+    assert edit.task_weeks.value() == 2

@@ -168,6 +168,7 @@ class Recurrence:
     active: bool
     kind: str = "task"  # task | event
     location: str = ""
+    task_weeks: int = 1  # événements : tâches modèles créées N semaine(s) avant chaque occurrence
 
 
 @dataclass

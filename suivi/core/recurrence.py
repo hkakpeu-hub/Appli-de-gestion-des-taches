@@ -28,7 +28,7 @@ from .tasks import TaskService
 
 log = logging.getLogger(__name__)
 HORIZON_DAYS = 90  # occurrences (tâches ou événements) générées à l'avance
-TASK_HORIZON_DAYS = 21  # tâches modèles d'un événement : créées seulement pour les 3 prochaines semaines (pas de tâches fantômes)
+DEFAULT_TASK_WEEKS = 1  # tâches modèles d'un événement : créées 1 semaine avant la date (réglable par série)
 WEEKDAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 FREQ_LABELS = {"daily": "Tous les jours", "weekly": "Toutes les semaines", "monthly": "Tous les mois"}
 
@@ -53,6 +53,7 @@ class RecurrenceInput:
     kind: str = "task"  # task | event
     location: str = ""
     templates: list[EventTemplate] = field(default_factory=list)  # événements : tâches modèles
+    task_weeks: int = DEFAULT_TASK_WEEKS  # événements : créer les tâches N semaine(s) à l'avance
 
 
 def occurrences(r: Recurrence | RecurrenceInput, frm: date, to: date) -> Iterator[date]:
@@ -121,6 +122,7 @@ class RecurrenceService:
             freq=r["freq"], interval=r["interval"], weekdays=[int(x) for x in (r["weekdays"] or "").split(",") if x != ""],
             month_day=r["month_day"], start_date=to_date(r["start_date"]), end_date=to_date(r["end_date"]), count=r["count"],
             auto_close=bool(r["auto_close"]), active=bool(r["active"]), kind=r["kind"], location=r["location"] or "",
+            task_weeks=r["task_weeks"],
         )
 
     _SELECT = ("SELECT s.*, p.name AS project_name FROM recurrences s LEFT JOIN projects p ON p.id=s.project_id")
@@ -182,6 +184,8 @@ class RecurrenceService:
             raise ValidationError("Le nombre d'occurrences doit être d'au moins 1.")
         if not next(occurrences(d, d.start_date, d.start_date + timedelta(days=366 * 3)), None):
             raise ValidationError("Cette règle ne produit aucune occurrence.")
+        if d.task_weeks < 1 or d.task_weeks > 26:
+            raise ValidationError("Les tâches doivent être créées 1 à 26 semaines à l'avance.")
         for t in d.templates:
             if not (t.title or "").strip():
                 raise ValidationError("Une tâche modèle n'a pas d'intitulé.")
@@ -198,12 +202,12 @@ class RecurrenceService:
         with self.db.transaction() as c:
             cur = c.execute(
                 """INSERT INTO recurrences(space_id,title,project_id,description,assignee,priority,start_time,end_time,est_minutes,
-                   freq,interval,weekdays,month_day,start_date,end_date,count,auto_close,active,created_at,kind,location)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1,?,?,?)""",
+                   freq,interval,weekdays,month_day,start_date,end_date,count,auto_close,active,created_at,kind,location,task_weeks)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,1,?,?,?,?)""",
                 (sp, d.title.strip(), project.id if project else None, (d.description or "").strip(), (d.assignee or "").strip(),
                  d.priority, iso_time(d.start_time), iso_time(d.end_time), d.est_minutes, d.freq, d.interval,
                  ",".join(str(x) for x in sorted(d.weekdays)), d.month_day, iso_date(d.start_date), iso_date(d.end_date),
-                 d.count, iso_datetime(self.clock()), d.kind, (d.location or "").strip()))
+                 d.count, iso_datetime(self.clock()), d.kind, (d.location or "").strip(), d.task_weeks))
             series_id = cur.lastrowid
             for pos, t in enumerate(d.templates):
                 c.execute("INSERT INTO event_templates(series_id,title,assignee,days_before,position) VALUES (?,?,?,?,?)",
@@ -223,12 +227,12 @@ class RecurrenceService:
         with self.db.transaction() as c:
             c.execute(
                 """UPDATE recurrences SET title=?,project_id=?,description=?,assignee=?,priority=?,start_time=?,end_time=?,
-                   est_minutes=?,freq=?,interval=?,weekdays=?,month_day=?,start_date=?,end_date=?,count=?,location=?,
+                   est_minutes=?,freq=?,interval=?,weekdays=?,month_day=?,start_date=?,end_date=?,count=?,location=?,task_weeks=?,
                    generated_until=NULL WHERE id=?""",
                 (d.title.strip(), project.id if project else None, (d.description or "").strip(), (d.assignee or "").strip(),
                  d.priority, iso_time(d.start_time), iso_time(d.end_time), d.est_minutes, d.freq, d.interval,
                  ",".join(str(x) for x in sorted(d.weekdays)), d.month_day, iso_date(d.start_date), iso_date(d.end_date),
-                 d.count, (d.location or "").strip(), series_id))
+                 d.count, (d.location or "").strip(), d.task_weeks, series_id))
             if d.kind == "task":
                 self._drop_untouched_future(c, series_id, today)
             else:
@@ -360,6 +364,7 @@ class RecurrenceService:
     def _sync_events(self, s: Recurrence, today: date, horizon: date) -> int:
         changed = 0
         templates = self.templates(s.id)
+        task_limit = today + timedelta(days=7 * max(1, s.task_weeks))  # fenêtre de création des tâches modèles
         known = {r["date"]: r["id"] for r in self.db.conn.execute("SELECT id, date FROM events WHERE series_id=?", (s.id,))}
         with self.tasks.batch():
             for d in occurrences(s, max(today, s.start_date), horizon):
@@ -369,9 +374,22 @@ class RecurrenceService:
                     ev = self.events.create(EventInput(s.title, d, s.start_time, s.end_time, s.location, s.description, s.space_id),
                                             series_id=s.id)
                     event_id, changed = ev.id, changed + 1
-                if templates and d <= today + timedelta(days=TASK_HORIZON_DAYS):  # idempotent ; jamais recréée si supprimée
+                if templates and d <= task_limit:  # idempotent ; jamais recréée si supprimée
                     self._apply_templates(event_id, templates)
+            # réduction de l'horizon : on retire les tâches modèles intactes des occurrences devenues trop lointaines
+            for d_iso, event_id in known.items():
+                if to_date(d_iso) > task_limit:
+                    self._prune_template_tasks(event_id)
         return changed
+
+    def _prune_template_tasks(self, event_id: int) -> None:
+        with self.db.transaction() as c:
+            for r in c.execute(
+                    """SELECT t.id FROM tasks t JOIN statuses s ON s.id=t.status_id WHERE t.event_id=? AND t.template_id IS NOT NULL
+                       AND t.deleted_at IS NULL AND s.kind='todo'
+                       AND NOT EXISTS (SELECT 1 FROM comments m WHERE m.task_id=t.id)
+                       AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.task_id=t.id)""", (event_id,)).fetchall():
+                c.execute("DELETE FROM tasks WHERE id=?", (r["id"],))
 
     def _apply_templates(self, event_id: int, templates: list[EventTemplate]) -> None:
         have = {r["template_id"] for r in self.db.conn.execute(

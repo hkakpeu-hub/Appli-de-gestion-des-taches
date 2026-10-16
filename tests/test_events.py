@@ -59,17 +59,31 @@ def test_sync_idempotent_deleted_task_and_event_not_recreated(ctx):
     assert ev2.id not in [e.id for e in ctx.events.list()] and len(ctx.events.list()) == n_events - 1
 
 
-def test_template_tasks_only_for_next_three_weeks_then_roll_forward(ctx, clock):
-    ctx.recurrences.create(culte_series())
+def test_template_tasks_created_one_week_ahead_by_default_then_roll_forward(ctx, clock):
+    s = ctx.recurrences.create(culte_series())
+    assert s.task_weeks == 1  # valeur par défaut : une semaine
     events = ctx.events.list()
-    assert len(events) >= 12  # événements : 90 jours
+    assert len(events) >= 12  # les événements sont créés 90 jours à l'avance
     with_tasks = [e for e in events if e.n_tasks]
-    assert len(with_tasks) == 3 and all((e.date - TODAY).days <= 21 for e in with_tasks)  # tâches : 3 prochaines semaines
-    assert len(ctx.tasks.all()) == 12  # pas de tâches fantômes pour les 3 mois à venir
-    clock.now = datetime(2026, 10, 20, 9, 0)  # une semaine plus tard : le prochain culte reçoit ses tâches
+    assert [e.date for e in with_tasks] == [date(2026, 10, 18)]  # seul le culte de la semaine a ses tâches
+    assert len(ctx.tasks.all()) == 4  # pas de tâches futures qui encombrent les listes
+    clock.now = datetime(2026, 10, 19, 9, 0)  # le lendemain du culte : le suivant (25/10) est dans la semaine
     ctx.recurrences.sync()
-    assert len(ctx.tasks.all()) == 16
-    assert ctx.recurrences.sync() == 0 and len(ctx.tasks.all()) == 16
+    assert len(ctx.tasks.all()) == 8
+    assert ctx.recurrences.sync() == 0 and len(ctx.tasks.all()) == 8  # idempotent
+
+
+def test_task_weeks_is_a_creation_parameter_and_can_shrink(ctx, clock):
+    s = ctx.recurrences.create(culte_series(task_weeks=3))
+    assert s.task_weeks == 3
+    assert [e.date for e in ctx.events.list() if e.n_tasks] == [date(2026, 10, 18), date(2026, 10, 25), date(2026, 11, 1)]
+    assert len(ctx.tasks.all()) == 12
+    # on repasse à 1 semaine : les tâches intactes des semaines lointaines sont retirées, celles de la semaine restent
+    ctx.recurrences.update(s.id, culte_series(task_weeks=1, templates=ctx.recurrences.templates(s.id)))
+    assert [e.date for e in ctx.events.list() if e.n_tasks] == [date(2026, 10, 18)] and len(ctx.tasks.all()) == 4
+    from suivi.core.recurrence import RecurrenceInput
+    with pytest.raises(ValidationError):
+        ctx.recurrences.create(culte_series(task_weeks=0))
 
 
 def test_days_before_deadline(ctx):
@@ -119,11 +133,11 @@ def test_planning_event_blocks_busy_and_free(ctx, make):
 
 
 def test_update_series_refits_events_and_templates(ctx):
-    s = ctx.recurrences.create(culte_series())
+    s = ctx.recurrences.create(culte_series(task_weeks=3))
     ev = ctx.events.list()[1]
     done = [t for t in ctx.events.linked_tasks(ev.id) if t.title == "Prier"][0]
     ctx.tasks.complete(done.id)  # cet événement a été « touché »
-    new = culte_series(title="Culte principal", start_time=time(8), end_time=time(12), weekdays=[6, 2],
+    new = culte_series(task_weeks=3, title="Culte principal", start_time=time(8), end_time=time(12), weekdays=[6, 2],
                        templates=[EventTemplate("Chanter", id=ctx.recurrences.templates(s.id)[0].id),
                                   EventTemplate("Accueil", "Paul")])
     ctx.recurrences.update(s.id, new)

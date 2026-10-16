@@ -63,7 +63,7 @@ espaces (le compteur de l'accueil les additionne, et la notification Windows ind
   Unique ou récurrent (« Culte, tous les dimanches de 7 h à 11 h »).
 - **Tâches rattachées à un événement** : « Chanter », « Danser », « Prier », « Lecture biblique »… Trois façons de les lier :
   1. *tâches modèles* d'un événement récurrent : elles sont recréées et rattachées à chaque occurrence, avec une échéance
-     « N jours avant » (créées pour les 3 prochaines semaines seulement, pour éviter des dizaines de tâches futures) ;
+     « N jours avant ». Elles sont créées **1 semaine avant** chaque occurrence par défaut (paramètre « Créer ces tâches N semaine(s) avant chaque événement », choisi à la création et modifiable), pour ne pas encombrer vos listes de tâches lointaines ;
   2. depuis la fiche de l'événement (double-clic) : ajout rapide `Accueil @Paul`, ou « Rattacher une tâche existante… » ;
   3. depuis la fenêtre d'une tâche : champ « Événement lié » (la tâche sans date prend celle de l'événement).
   La fiche de l'événement affiche l'avancement (« 3 / 4 faites ») et permet de cocher les tâches ; un 🗓 marque les tâches liées.

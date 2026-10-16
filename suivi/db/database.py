@@ -217,6 +217,10 @@ MIGRATIONS: list[str] = [
         WHERE r.kind='event' AND t.occurrence_date IS NOT NULL GROUP BY r.id, t.occurrence_date;
     DELETE FROM tasks WHERE series_id IN (SELECT id FROM recurrences WHERE kind='event');
     """,
+    # --- version 5 : nombre de semaines à l'avance pour créer les tâches modèles d'un événement ----
+    """
+    ALTER TABLE recurrences ADD COLUMN task_weeks INTEGER NOT NULL DEFAULT 1;
+    """,
 ]
 
 
